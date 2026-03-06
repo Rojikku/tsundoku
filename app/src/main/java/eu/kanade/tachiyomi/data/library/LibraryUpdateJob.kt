@@ -5,6 +5,7 @@ import android.content.pm.ServiceInfo
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
+import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -80,7 +81,9 @@ import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
+import kotlin.math.floor
 import kotlin.math.max
+import kotlin.random.Random
 
 @OptIn(ExperimentalAtomicApi::class)
 class LibraryUpdateJob(private val context: Context, workerParams: WorkerParameters) :
@@ -325,6 +328,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         val fetchWindow = fetchInterval.getWindow(ZonedDateTime.now())
         val globalUpdateThrottlingMs = libraryPreferences.autoUpdateThrottle().get().toLong()
         val novelThrottleEnabled = novelDownloadPreferences.enableUpdateThrottling().get()
+        val updateStagger = novelDownloadPreferences.enableUpdateStaggering().get()
         val novelUpdateThrottlingMs = novelDownloadPreferences.updateDelay().get().toLong()
 
         coroutineScope {
@@ -352,8 +356,18 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                                 val manga = libraryManga.manga
                                 ensureActive()
 
+                                // Apply an additional delay of 3-8 minutes every 5 sources
+                                if (floor((index / 5).toDouble()) > 0 && updateStagger) {
+                                    // Randomly select minutes, convert to ms
+                                    // Add a random number to appear more typical
+                                    val stagger = (Random.nextLong(3, 8) * 60000L) + Random.nextLong(23, 999)
+                                    Log.d("LibraryUpdate", "Staggering for ${stagger}ms")
+                                    delay(stagger)
+                                }
+
                                 // Apply per-source throttling: delay only between updates from SAME source
                                 if (index > 0 && updateThrottlingMs > 0) {
+                                    Log.d("LibraryUpdate", "Throttling for ${updateThrottlingMs}ms")
                                     delay(updateThrottlingMs)
                                 }
 

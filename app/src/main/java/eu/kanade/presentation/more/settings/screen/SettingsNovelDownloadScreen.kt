@@ -261,6 +261,7 @@ object SettingsNovelDownloadScreen : SearchableSettings {
     ): Preference.PreferenceGroup {
         val enabled = prefs.enableUpdateThrottling().collectAsState().value
         val updateDelay = prefs.updateDelay().collectAsState().value
+        val updateStagger = prefs.enableUpdateStaggering().collectAsState().value
         val parallelUpdates = prefs.parallelNovelUpdates().collectAsState().value
 
         val lowDelayWarning = if (updateDelay < LOW_DELAY_THRESHOLD_MS && enabled) {
@@ -285,6 +286,11 @@ object SettingsNovelDownloadScreen : SearchableSettings {
                     valueString = "${updateDelay}ms",
                     onValueChanged = { prefs.updateDelay().set(it + Random.nextInt(0, 9)) },
                     enabled = enabled,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = prefs.enableUpdateStaggering(),
+                    title = stringResource(TDMR.strings.pref_novel_update_stagger),
+                    subtitle = stringResource(TDMR.strings.pref_novel_update_staggersummary),
                 ),
                 Preference.PreferenceItem.SliderPreference(
                     value = parallelUpdates,

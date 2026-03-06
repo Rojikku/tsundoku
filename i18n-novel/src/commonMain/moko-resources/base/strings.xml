@@ -146,6 +146,8 @@
     <string name="pref_novel_random_delay_min_summary">Minimum random delay added to base delay (ms)</string>
     <string name="pref_novel_update_throttling">Update throttling</string>
     <string name="pref_novel_update_throttling_summary">Add delays during library updates for novels</string>
+    <string name="pref_novel_update_stagger">Update staggering</string>
+    <string name="pref_novel_update_staggersummary">Add 3-8 minute delays every 5 novels during library updates</string>
     <string name="pref_novel_update_delay">Update delay</string>
     <string name="pref_novel_update_delay_summary">Delay between checking novels during updates (ms)</string>
     <string name="pref_novel_mass_import_throttling">Mass import throttling</string>

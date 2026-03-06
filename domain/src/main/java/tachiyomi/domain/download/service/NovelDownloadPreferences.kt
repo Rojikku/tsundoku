@@ -51,6 +51,14 @@ class NovelDownloadPreferences(
     )
 
     /**
+     * Enable additional delay every 5 library updates for novel sources
+     */
+    fun enableUpdateStaggering() = preferenceStore.getBoolean(
+        "novel_update_staggering_enabled",
+        false,
+    )
+
+    /**
      * Delay between checking novels during library update (in milliseconds)
      */
     fun updateDelay() = preferenceStore.getInt(
