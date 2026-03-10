@@ -155,21 +155,23 @@ object SettingsNovelDownloadScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.SliderPreference(
                     value = downloadDelay,
-                    valueRange = 0..30000,
+                    valueRange = 0..120000,
+                    steps = 1000,
                     title = stringResource(TDMR.strings.pref_novel_download_delay),
                     subtitle = stringResource(TDMR.strings.pref_novel_download_delay_summary) + lowDelayWarning,
                     valueString = "${downloadDelay}ms",
-                    onValueChanged = { prefs.downloadDelay().set(it) },
+                    onValueChanged = { prefs.downloadDelay().set(it + Random.nextInt(0, 999)) },
                     enabled = enabled,
                 ),
                 Preference.PreferenceItem.SliderPreference(
                     value = randomDelayMin,
-                    valueRange = 0..5000,
+                    valueRange = 0..10000,
+                    steps = 1000,
                     title = stringResource(TDMR.strings.pref_novel_random_delay_min),
                     subtitle = stringResource(TDMR.strings.pref_novel_random_delay_min_summary),
                     valueString = "${randomDelayMin}ms",
                     onValueChanged = {
-                        prefs.randomDelayMin().set(it)
+                        prefs.randomDelayMin().set(it + Random.nextInt(0, 999))
                         if (it > prefs.randomDelayRange().get()) {
                             prefs.randomDelayRange().set(it)
                         }
@@ -178,12 +180,13 @@ object SettingsNovelDownloadScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.SliderPreference(
                     value = randomDelay,
-                    valueRange = 0..5000,
+                    valueRange = 0..60000,
+                    steps = 1000,
                     title = stringResource(TDMR.strings.pref_novel_random_delay),
                     subtitle = stringResource(TDMR.strings.pref_novel_random_delay_summary),
                     valueString = "$randomDelayMin-${randomDelay}ms",
                     onValueChanged = {
-                        prefs.randomDelayRange().set(it)
+                        prefs.randomDelayRange().set(it + Random.nextInt(0, 999))
                         if (it < prefs.randomDelayMin().get()) {
                             prefs.randomDelayMin().set(it)
                         }
@@ -280,11 +283,12 @@ object SettingsNovelDownloadScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.SliderPreference(
                     value = updateDelay,
-                    valueRange = 0..60000 step 10,
+                    valueRange = 0..120000,
+                    steps = 1000,
                     title = stringResource(TDMR.strings.pref_novel_update_delay),
                     subtitle = stringResource(TDMR.strings.pref_novel_update_delay_subtitle) + lowDelayWarning,
                     valueString = "${updateDelay}ms",
-                    onValueChanged = { prefs.updateDelay().set(it + Random.nextInt(0, 9)) },
+                    onValueChanged = { prefs.updateDelay().set(it + Random.nextInt(0, 999)) },
                     enabled = enabled,
                 ),
                 Preference.PreferenceItem.SwitchPreference(
@@ -327,11 +331,12 @@ object SettingsNovelDownloadScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.SliderPreference(
                     value = massImportDelay,
-                    valueRange = 0..15000,
+                    valueRange = 0..120000,
+                    steps = 1000,
                     title = stringResource(TDMR.strings.pref_novel_mass_import_delay),
                     subtitle = stringResource(TDMR.strings.pref_novel_mass_import_delay_subtitle) + lowDelayWarning,
                     valueString = "${massImportDelay}ms",
-                    onValueChanged = { prefs.massImportDelay().set(it) },
+                    onValueChanged = { prefs.massImportDelay().set(it + Random.nextInt(0, 999)) },
                     enabled = enabled,
                 ),
                 Preference.PreferenceItem.SliderPreference(
