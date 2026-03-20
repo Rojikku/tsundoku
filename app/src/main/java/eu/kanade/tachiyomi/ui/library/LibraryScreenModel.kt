@@ -341,8 +341,8 @@ class LibraryScreenModel(
             val bookmarkedPasses = applyFilter(filterBookmarked) { it.libraryManga.hasBookmarks }
             if (!bookmarkedPasses) return@fastFilter false
 
-            val completedPasses = applyFilter(filterCompleted) { 
-                it.libraryManga.manga.status.toInt() == SManga.COMPLETED 
+            val completedPasses = applyFilter(filterCompleted) {
+                it.libraryManga.manga.status.toInt() == SManga.COMPLETED
             }
             if (!completedPasses) return@fastFilter false
 
@@ -422,7 +422,7 @@ class LibraryScreenModel(
             }
             chapterCountPasses
         }
-        
+
         return result
     }
 
@@ -437,9 +437,9 @@ class LibraryScreenModel(
                 groupCache.getOrPut(categoryId) { ArrayList() }.add(item.id)
             }
         }
-        
+
         val visibleCategories = categories.filter { showSystemCategory || !it.isSystemCategory }
-        return visibleCategories.associateWith { 
+        return visibleCategories.associateWith {
             groupCache[it.id] ?: emptyList()
         }
     }
