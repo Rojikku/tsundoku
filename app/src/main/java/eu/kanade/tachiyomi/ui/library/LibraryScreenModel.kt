@@ -119,7 +119,7 @@ class LibraryScreenModel(
 
     private val itemCache = HashMap<Long, LibraryItem>()
     private val itemCacheMangaRef = HashMap<Long, LibraryManga>()
-    private var itemCachePrefs: ItemPreferences? = null
+    private var itemCachePrefs: DisplayPreferences? = null
 
     enum class LibraryType {
         All,
@@ -132,6 +132,9 @@ class LibraryScreenModel(
             state.copy(activeCategoryIndex = libraryPreferences.lastUsedCategory().get())
         }
         screenModelScope.launchIO {
+            val itemPreferencesFlow = getLibraryItemPreferencesFlow()
+            val displayPreferencesFlow = getLibraryDisplayPreferencesFlow()
+
             // Subscribe to categories filtered by content type based on library type
             val categoriesFlow = when (type) {
                 LibraryType.All -> getCategories.subscribe()
@@ -178,40 +181,42 @@ class LibraryScreenModel(
                 SearchConfig(query, chapterMatchIds, searchByUrl, useRegex)
             }
 
-            combine(
-                searchWithChapterMatchesFlow,
+            val filteredLibraryDataFlow = combine(
                 categoriesFlow,
-                getFavoritesFlow(),
+                getFavoritesFlow(displayPreferencesFlow),
                 combine(getTracksPerManga.subscribe(), getTrackingFiltersFlow(), ::Pair),
-                getLibraryItemPreferencesFlow(),
+                itemPreferencesFlow,
                 getLibraryManga.isLoading(),
-            ) { flows: Array<*> ->
-                val searchConfig = flows[0] as SearchConfig
-
-                @Suppress("UNCHECKED_CAST")
-                val categories = flows[1] as List<Category>
-
-                @Suppress("UNCHECKED_CAST")
-                val favorites = flows[2] as List<LibraryItem>
-                val (tracksMap, trackingFilters) = flows[3] as Pair<*, *>
-                val itemPreferences = flows[4]
-                val isLoading = flows[5] as Boolean
+            ) { categories, favorites, tracksAndFilters, itemPreferences, isLoading ->
+                val (tracksMap, trackingFilters) = tracksAndFilters
+                val castTracksMap = tracksMap as Map<Long, List<Track>>
+                val castTrackingFilters = trackingFilters as Map<Long, TriState>
 
                 val showSystemCategory = favorites.any { it.libraryManga.categories.contains(0L) }
 
-                @Suppress("UNCHECKED_CAST")
                 val filteredFavorites = favorites
-                    .applyFilters(tracksMap as Map<Long, List<Track>>, trackingFilters as Map<Long, TriState>, itemPreferences as ItemPreferences)
-                    .let { if (searchConfig.query == null) it else it.filter { m -> m.matches(searchConfig.query, searchConfig.chapterMatchIds, searchConfig.searchByUrl, searchConfig.useRegex) } }
+                    .applyFilters(castTracksMap, castTrackingFilters, itemPreferences)
 
                 LibraryData(
                     isInitialized = !isLoading,
                     showSystemCategory = showSystemCategory,
                     categories = categories,
                     favorites = filteredFavorites,
-                    tracksMap = tracksMap as Map<Long, List<Track>>,
-                    loggedInTrackerIds = (trackingFilters as Map<Long, TriState>).keys,
+                    tracksMap = castTracksMap,
+                    loggedInTrackerIds = castTrackingFilters.keys,
                 )
+            }
+
+            combine(filteredLibraryDataFlow, searchWithChapterMatchesFlow) { filteredData, searchConfig ->
+                val searchedFavorites = if (searchConfig.query == null) {
+                    filteredData.favorites
+                } else {
+                    filteredData.favorites.fastFilter { manga ->
+                        manga.matches(searchConfig.query, searchConfig.chapterMatchIds, searchConfig.searchByUrl, searchConfig.useRegex)
+                    }
+                }
+
+                filteredData.copy(favorites = searchedFavorites)
             }
                 .collectLatest { libraryData ->
                     mutableState.update { state ->
@@ -309,62 +314,9 @@ class LibraryScreenModel(
 
         val isNotLoggedInAnyTrack = trackingFilter.isEmpty()
 
-        val excludedTracks = trackingFilter.mapNotNull { if (it.value == TriState.ENABLED_NOT) it.key else null }
-        val includedTracks = trackingFilter.mapNotNull { if (it.value == TriState.ENABLED_IS) it.key else null }
+        val excludedTracks = trackingFilter.mapNotNullTo(HashSet()) { if (it.value == TriState.ENABLED_NOT) it.key else null }
+        val includedTracks = trackingFilter.mapNotNullTo(HashSet()) { if (it.value == TriState.ENABLED_IS) it.key else null }
         val trackFiltersIsIgnored = includedTracks.isEmpty() && excludedTracks.isEmpty()
-
-        val filterFnDownloaded: (LibraryItem) -> Boolean = {
-            applyFilter(filterDownloaded) {
-                it.libraryManga.manga.isLocal() ||
-                    it.downloadCount > 0
-            }
-        }
-
-        val filterFnUnread: (LibraryItem) -> Boolean = {
-            applyFilter(filterUnread) { it.libraryManga.unreadCount > 0 }
-        }
-
-        val filterFnStarted: (LibraryItem) -> Boolean = {
-            applyFilter(filterStarted) { it.libraryManga.hasStarted }
-        }
-
-        val filterFnBookmarked: (LibraryItem) -> Boolean = {
-            applyFilter(filterBookmarked) { it.libraryManga.hasBookmarks }
-        }
-
-        val filterFnCompleted: (LibraryItem) -> Boolean = {
-            applyFilter(filterCompleted) { it.libraryManga.manga.status.toInt() == SManga.COMPLETED }
-        }
-
-        val filterFnIntervalCustom: (LibraryItem) -> Boolean = {
-            if (skipOutsideReleasePeriod) {
-                applyFilter(filterIntervalCustom) { it.libraryManga.manga.fetchInterval < 0 }
-            } else {
-                true
-            }
-        }
-
-        val filterFnTracking: (LibraryItem) -> Boolean = tracking@{ item ->
-            if (isNotLoggedInAnyTrack || trackFiltersIsIgnored) return@tracking true
-
-            val mangaTracks = trackMap[item.id].orEmpty().map { it.trackerId }
-
-            val isExcluded = excludedTracks.isNotEmpty() && mangaTracks.fastAny { it in excludedTracks }
-            val isIncluded = includedTracks.isEmpty() || mangaTracks.fastAny { it in includedTracks }
-
-            !isExcluded && isIncluded
-        }
-
-        val filterFnExtensions: (LibraryItem) -> Boolean = { item ->
-            // If extension is in excluded set, hide it
-            item.libraryManga.manga.source.toString() !in preferences.excludedExtensions
-        }
-
-        val filterFnNovel: (LibraryItem) -> Boolean = { item ->
-            val isNovel = item.libraryManga.manga.isNovel
-            applyFilter(preferences.filterNovel) { isNovel }
-        }
-
         val tagIncluded = preferences.includedTags
         val tagExcluded = preferences.excludedTags
         val tagCaseSensitive = preferences.tagCaseSensitive
@@ -373,67 +325,105 @@ class LibraryScreenModel(
         val tagIncludeModeAnd = preferences.tagIncludeModeAnd
         val tagExcludeModeAnd = preferences.tagExcludeModeAnd
 
-        val filterFnTags: (LibraryItem) -> Boolean = tags@{ item ->
-            val mangaTags = item.libraryManga.manga.genre
-                ?.map { it.trim() }
-                ?.filter { it.isNotBlank() }
-                ?: emptyList()
+        val result = fastFilter {
+            // Quick exit for some checks that are fast
+            val downloadPasses = applyFilter(filterDownloaded) {
+                it.libraryManga.manga.isLocal() || it.downloadCount > 0
+            }
+            if (!downloadPasses) return@fastFilter false
 
-            // Handle "No Tags" filter
-            val noTagsFilter = preferences.filterNoTags
-            if (noTagsFilter != TriState.DISABLED) {
-                val hasNoTags = mangaTags.isEmpty()
-                when (noTagsFilter) {
-                    TriState.ENABLED_IS -> if (!hasNoTags) return@tags false
-                    TriState.ENABLED_NOT -> if (hasNoTags) return@tags false
-                    else -> {}
+            val unreadPasses = applyFilter(filterUnread) { it.libraryManga.unreadCount > 0 }
+            if (!unreadPasses) return@fastFilter false
+
+            val startedPasses = applyFilter(filterStarted) { it.libraryManga.hasStarted }
+            if (!startedPasses) return@fastFilter false
+
+            val bookmarkedPasses = applyFilter(filterBookmarked) { it.libraryManga.hasBookmarks }
+            if (!bookmarkedPasses) return@fastFilter false
+
+            val completedPasses = applyFilter(filterCompleted) { 
+                it.libraryManga.manga.status.toInt() == SManga.COMPLETED 
+            }
+            if (!completedPasses) return@fastFilter false
+
+            val intervalPasses = if (skipOutsideReleasePeriod) {
+                applyFilter(filterIntervalCustom) { it.libraryManga.manga.fetchInterval < 0 }
+            } else {
+                true
+            }
+            if (!intervalPasses) return@fastFilter false
+
+            // Tracking filter
+            val trackingPasses = if (isNotLoggedInAnyTrack || trackFiltersIsIgnored) {
+                true
+            } else {
+                val mangaTracks = trackMap[it.id].orEmpty()
+                val isExcluded = excludedTracks.isNotEmpty() && mangaTracks.fastAny { track -> track.trackerId in excludedTracks }
+                val isIncluded = includedTracks.isEmpty() || mangaTracks.fastAny { track -> track.trackerId in includedTracks }
+                !isExcluded && isIncluded
+            }
+            if (!trackingPasses) return@fastFilter false
+
+            // Extension filter
+            val extensionPasses = it.libraryManga.manga.source.toString() !in preferences.excludedExtensions
+            if (!extensionPasses) return@fastFilter false
+
+            // Novel filter
+            val novelPasses = applyFilter(preferences.filterNovel) { it.libraryManga.manga.isNovel }
+            if (!novelPasses) return@fastFilter false
+
+            // Tags filter (more expensive, so do it last)
+            val tagsPasses = if (normalizedIncluded.isEmpty() && normalizedExcluded.isEmpty()) {
+                true
+            } else {
+                val mangaTags = it.libraryManga.manga.genre
+                    ?.map { tag -> tag.trim() }
+                    ?.filter { tag -> tag.isNotBlank() }
+                    ?: emptyList()
+
+                // Handle "No Tags" filter
+                val noTagsFilter = preferences.filterNoTags
+                if (noTagsFilter != TriState.DISABLED) {
+                    val hasNoTags = mangaTags.isEmpty()
+                    when (noTagsFilter) {
+                        TriState.ENABLED_IS -> if (!hasNoTags) return@fastFilter false
+                        TriState.ENABLED_NOT -> if (hasNoTags) return@fastFilter false
+                        else -> {}
+                    }
                 }
-            }
 
-            if (normalizedIncluded.isEmpty() && normalizedExcluded.isEmpty()) return@tags true
-
-            val normalizedMangaTags = if (tagCaseSensitive) mangaTags else mangaTags.map { it.lowercase() }
-
-            if (normalizedExcluded.isNotEmpty()) {
-                val hasExcludedTag = if (tagExcludeModeAnd) {
-                    normalizedExcluded.all { excludedTag -> normalizedMangaTags.any { it == excludedTag } }
-                } else {
-                    normalizedMangaTags.any { tag -> tag in normalizedExcluded }
+                if (normalizedExcluded.isNotEmpty()) {
+                    val normalizedMangaTags = if (tagCaseSensitive) mangaTags else mangaTags.map { tag -> tag.lowercase() }
+                    val hasExcludedTag = if (tagExcludeModeAnd) {
+                        normalizedExcluded.all { excludedTag -> normalizedMangaTags.any { it == excludedTag } }
+                    } else {
+                        normalizedMangaTags.any { tag -> tag in normalizedExcluded }
+                    }
+                    if (hasExcludedTag) return@fastFilter false
                 }
-                if (hasExcludedTag) return@tags false
-            }
 
-            if (normalizedIncluded.isNotEmpty()) {
-                val hasIncludedTag = if (tagIncludeModeAnd) {
-                    normalizedIncluded.all { includedTag -> normalizedMangaTags.any { it == includedTag } }
-                } else {
-                    normalizedMangaTags.any { tag -> tag in normalizedIncluded }
+                if (normalizedIncluded.isNotEmpty()) {
+                    val normalizedMangaTags = if (tagCaseSensitive) mangaTags else mangaTags.map { tag -> tag.lowercase() }
+                    val hasIncludedTag = if (tagIncludeModeAnd) {
+                        normalizedIncluded.all { includedTag -> normalizedMangaTags.any { it == includedTag } }
+                    } else {
+                        normalizedMangaTags.any { tag -> tag in normalizedIncluded }
+                    }
+                    if (!hasIncludedTag) return@fastFilter false
                 }
-                if (!hasIncludedTag) return@tags false
+
+                true
             }
+            if (!tagsPasses) return@fastFilter false
 
-            true
-        }
-
-        val filterFnChapterCount: (LibraryItem) -> Boolean = { item ->
-            applyFilter(preferences.filterChapterCount) {
-                item.libraryManga.totalChapters >= preferences.filterChapterCountThreshold
+            // Chapter count filter
+            val chapterCountPasses = applyFilter(preferences.filterChapterCount) {
+                it.libraryManga.totalChapters >= preferences.filterChapterCountThreshold
             }
+            chapterCountPasses
         }
-
-        return fastFilter {
-            filterFnDownloaded(it) &&
-                filterFnUnread(it) &&
-                filterFnStarted(it) &&
-                filterFnBookmarked(it) &&
-                filterFnCompleted(it) &&
-                filterFnIntervalCustom(it) &&
-                filterFnTracking(it) &&
-                filterFnExtensions(it) &&
-                filterFnNovel(it) &&
-                filterFnTags(it) &&
-                filterFnChapterCount(it)
-        }
+        
+        return result
     }
 
     private fun List<LibraryItem>.applyGrouping(
@@ -441,13 +431,17 @@ class LibraryScreenModel(
         showSystemCategory: Boolean,
     ): Map<Category, List</* LibraryItem */ Long>> {
         val groupCache = mutableMapOf</* Category */ Long, MutableList</* LibraryItem */ Long>>()
-        forEach { item ->
-            item.libraryManga.categories.forEach { categoryId ->
-                groupCache.getOrPut(categoryId) { mutableListOf() }.add(item.id)
+        for (item in this) {
+            val cats = item.libraryManga.categories
+            for (categoryId in cats) {
+                groupCache.getOrPut(categoryId) { ArrayList() }.add(item.id)
             }
         }
-        return categories.filter { showSystemCategory || !it.isSystemCategory }
-            .associateWith { groupCache[it.id]?.toList().orEmpty() }
+        
+        val visibleCategories = categories.filter { showSystemCategory || !it.isSystemCategory }
+        return visibleCategories.associateWith { 
+            groupCache[it.id] ?: emptyList()
+        }
     }
 
     private fun Map<Category, List</* LibraryItem */ Long>>.applySort(
@@ -460,8 +454,10 @@ class LibraryScreenModel(
         }
 
         val defaultTrackerScoreSortValue = -1.0
-        val sourceNameCache by lazy { HashMap<Long, String>() }
-        val trackerScores by lazy {
+        val needsSourceName = keys.any { it.sort.type == LibrarySort.Type.SourceName }
+        val needsTrackerMean = keys.any { it.sort.type == LibrarySort.Type.TrackerMean }
+        val sourceNameCache = if (needsSourceName) HashMap<Long, String>() else null
+        val trackerScores = if (needsTrackerMean) {
             val trackerMap = trackerManager.getAll(loggedInTrackerIds).associateBy { e -> e.id }
             trackMap.mapValues { entry ->
                 when {
@@ -472,6 +468,8 @@ class LibraryScreenModel(
                             .average()
                 }
             }
+        } else {
+            emptyMap()
         }
 
         fun LibrarySort.comparator(): Comparator<LibraryItem> = Comparator { manga1, manga2 ->
@@ -513,7 +511,7 @@ class LibraryScreenModel(
                     item1Score.compareTo(item2Score)
                 }
                 LibrarySort.Type.SourceName -> {
-                    val sourceName1 = sourceNameCache.getOrPut(manga1.libraryManga.manga.source) {
+                    val sourceName1 = sourceNameCache!!.getOrPut(manga1.libraryManga.manga.source) {
                         sourceManager.getOrStub(manga1.libraryManga.manga.source).name
                     }
                     val sourceName2 = sourceNameCache.getOrPut(manga2.libraryManga.manga.source) {
@@ -602,10 +600,10 @@ class LibraryScreenModel(
 
     private var isNovelBackfillDone = false
 
-    private fun getFavoritesFlow(): Flow<List<LibraryItem>> {
+    private fun getFavoritesFlow(displayPreferencesFlow: Flow<DisplayPreferences>): Flow<List<LibraryItem>> {
         return combine(
             getLibraryManga.subscribe(),
-            getLibraryItemPreferencesFlow(),
+            displayPreferencesFlow,
             downloadCache.changes.onStart { emit(Unit) },
         ) { libraryManga, preferences, _ ->
             if (!isNovelBackfillDone) {
@@ -676,6 +674,20 @@ class LibraryScreenModel(
             }
 
             result
+        }
+    }
+
+    private fun getLibraryDisplayPreferencesFlow(): Flow<DisplayPreferences> {
+        return combine(
+            libraryPreferences.unreadBadge().changes(),
+            libraryPreferences.localBadge().changes(),
+            libraryPreferences.languageBadge().changes(),
+        ) { unreadBadge, localBadge, languageBadge ->
+            DisplayPreferences(
+                unreadBadge = unreadBadge,
+                localBadge = localBadge,
+                languageBadge = languageBadge,
+            )
         }
     }
 
@@ -1670,6 +1682,13 @@ class LibraryScreenModel(
         data class RemoveChapters(val manga: List<Manga>) : Dialog
         data class MarkReadConfirmation(val read: Boolean) : Dialog
     }
+
+    @Immutable
+    private data class DisplayPreferences(
+        val unreadBadge: Boolean,
+        val localBadge: Boolean,
+        val languageBadge: Boolean,
+    )
 
     @Immutable
     private data class ItemPreferences(
