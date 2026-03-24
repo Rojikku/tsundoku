@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.util.chapter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import coil3.imageLoader
 import eu.kanade.tachiyomi.network.NetworkHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,7 +17,6 @@ import uy.kohesive.injekt.api.get
 import java.io.ByteArrayOutputStream
 import java.net.URL
 import java.util.regex.Pattern
-import coil3.imageLoader
 
 /**
  * Utility class for extracting image URLs from HTML and embedding them as base64.
@@ -88,7 +88,7 @@ class ChapterImageEmbedder(
                         do {
                             filename = "image_${imageCounter++}.$extension"
                         } while (tmpDir.findFile(filename) != null)
-                        
+
                         tmpDir.createFile(filename)?.openOutputStream()?.use { it.write(imageBytes) }
                         "tsundoku-novel-image://$filename"
                     } else {
@@ -204,7 +204,7 @@ class ChapterImageEmbedder(
                         logcat { "ChapterImageEmbedder: Loaded image from Coil cache: $url" }
                     }
                 }
-            } catch(e: Exception) {
+            } catch (e: Exception) {
                 logcat(LogPriority.DEBUG) { "ChapterImageEmbedder: Not found in Coil cache or error reading, fetching from network..." }
             }
 

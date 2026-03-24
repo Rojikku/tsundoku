@@ -32,7 +32,7 @@ class LocalNovelPageLoader(
         }
     }
 
-    override suspend fun getPageDataStream(url: String): java.io.InputStream? { 
+    override suspend fun getPageDataStream(url: String): java.io.InputStream? {
         val sChapter = chapter.chapter
         return (source as? tachiyomi.source.local.LocalNovelSource)?.getChapterImage(sChapter, url)
     }

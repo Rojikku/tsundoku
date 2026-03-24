@@ -104,7 +104,7 @@ internal class DownloadPageLoader(
         }
     }
 
-override suspend fun getPageDataStream(url: String): java.io.InputStream? {
+    override suspend fun getPageDataStream(url: String): java.io.InputStream? {
         // 1. Try archive (for normal downloaded CBZ)
         archivePageLoader?.getPageDataStream(url)?.let { return it }
 

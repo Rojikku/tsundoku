@@ -142,7 +142,7 @@ private class CoilImageGetter(
 
     override fun getDrawable(source: String?): Drawable {
         val wrapper = DrawableWrapper()
-        
+
         val contentWidth = textView.width - textView.paddingLeft - textView.paddingRight
         val maxWidth = if (contentWidth > 0) {
             contentWidth
@@ -153,7 +153,7 @@ private class CoilImageGetter(
         // Add a temporary loading placeholder taking full width to prevent inline stacking
         val placeholder = android.graphics.drawable.ColorDrawable(android.graphics.Color.LTGRAY)
         val placeholderHeight = (200 * activity.resources.displayMetrics.density).toInt()
-        
+
         // Use maxWidth to force the placeholder onto its own line and prevent images stacking side-by-side
         placeholder.setBounds(0, 0, maxWidth, placeholderHeight)
         wrapper.innerDrawable = placeholder

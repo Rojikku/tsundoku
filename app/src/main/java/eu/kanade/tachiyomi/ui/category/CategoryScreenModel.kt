@@ -77,7 +77,7 @@ class CategoryScreenModel(
                         getLibraryManga.applyCategoryUpdates(
                             mangaIds = mangaIds,
                             addCategories = emptyList(),
-                            removeCategories = listOf(categoryId)
+                            removeCategories = listOf(categoryId),
                         )
                     }
                 }
