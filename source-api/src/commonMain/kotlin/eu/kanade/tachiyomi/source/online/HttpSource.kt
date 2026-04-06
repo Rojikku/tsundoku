@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.RefreshContext
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import okhttp3.Headers
@@ -255,6 +256,60 @@ abstract class HttpSource : CatalogueSource {
     @Suppress("DEPRECATION")
     override suspend fun getChapterList(manga: SManga): List<SChapter> {
         return fetchChapterList(manga).awaitSingle()
+    }
+
+    /**
+     * Get all the available chapters for a manga with refresh context.
+     * Default implementation does intelligent delta refresh to avoid redundant requests.
+     * Extensions can override this for custom optimization logic.
+     *
+     * @param manga the manga to update
+     * @param context refresh context containing existing local state
+     * @return the chapters for the manga
+     */
+    override suspend fun getChapterList(manga: SManga, context: RefreshContext): List<SChapter> {
+        // Only enable smart refresh if we have existing chapters and it's been less than 12 hours
+        val refreshThreshold = 72 * 60 * 60 * 1000 // 72 hours
+        if (context.existingChapters.isNotEmpty() && System.currentTimeMillis() - context.lastFetchTime < refreshThreshold) {
+            try {
+                // Use same request as normal chapter list fetch
+                val response = client.newCall(chapterListRequest(manga)).execute()
+
+                // Extract chapter count without parsing full response
+                val currentCount = extractChapterCountFromPage(response)
+
+                // If count matches exactly, return existing chapters immediately
+                if (currentCount == context.existingChapters.size) {
+                    response.close()
+                    return context.existingChapters
+                }
+            } catch (e: Exception) {
+                // Silently fall back to normal flow on any error
+            }
+        }
+
+        // Fall back to original normal flow
+        return getChapterList(manga)
+    }
+
+    /**
+     * Extracts total chapter count from the manga page response.
+     * Extensions can override this for their specific site layout for better accuracy.
+     * Default implementation tries common patterns that work on most sites.
+     *
+     * @param response the manga page response
+     * @return total chapter count found, 0 if unknown
+     */
+    open fun extractChapterCountFromPage(response: Response): Int {
+        // Only read first 1MB to avoid loading full page
+        val body = response.peekBody(1024 * 1024).string()
+
+        // Try common chapter count patterns that work on most sites
+        return Regex("""(?:chapters?|total)[^\d]{0,10}(\d+)""", RegexOption.IGNORE_CASE)
+            .find(body)
+            ?.groupValues
+            ?.get(1)
+            ?.toIntOrNull() ?: 0
     }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getChapterList"))
