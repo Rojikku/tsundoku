@@ -7,11 +7,16 @@ import org.jsoup.parser.Parser
 import java.io.Closeable
 import java.io.File
 import java.io.InputStream
+import java.net.URLDecoder
 
 /**
  * Wrapper over ArchiveReader to load files in epub format.
  */
 class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
+
+    private fun String.urlDecoded(): String {
+        return runCatching { URLDecoder.decode(this, "UTF-8") }.getOrDefault(this)
+    }
 
     /**
      * Path separator used by this epub.
@@ -126,7 +131,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
             .associateBy { it.attr("id") }
 
         val spine = document.select("spine > itemref").map { it.attr("idref") }
-        return spine.mapNotNull { pages[it] }.map { it.attr("href") }
+        return spine.mapNotNull { pages[it] }.map { it.attr("href").urlDecoded() }
     }
 
     /**
@@ -291,10 +296,20 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
         return pages.mapIndexed { index, page ->
             EpubChapter(
                 title = "Chapter ${index + 1}",
-                href = page,
+                href = resolveZipPath(opfBasePath, page),
                 order = index,
             )
         }
+    }
+
+    /**
+     * Returns XHTML resources listed in OPF spine, resolved to archive paths.
+     */
+    fun getSpinePageHrefs(): List<String> {
+        val ref = getPackageHref()
+        val doc = getPackageDocument(ref)
+        val opfBasePath = getParentDirectory(ref)
+        return getPagesFromDocument(doc).map { resolveZipPath(opfBasePath, it) }
     }
 
     /**
@@ -346,7 +361,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
             val navElement = doc.selectFirst("nav[*|type=toc], nav#toc, nav[epub\\:type=toc]")
             navElement?.select("li a")?.forEachIndexed { index, element ->
                 val title = element.text().trim()
-                val href = element.attr("href").trim()
+                val href = element.attr("href").trim().urlDecoded()
                 if (title.isNotEmpty() && href.isNotEmpty()) {
                     // Resolve path and then restore fragment (if present).
                     val pathPart = href.substringBefore("#")
@@ -382,7 +397,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
             val doc = Jsoup.parse(inputStream, null, "", Parser.xmlParser())
             doc.select("navPoint").forEachIndexed { index, navPoint ->
                 val title = navPoint.selectFirst("navLabel > text")?.text()?.trim() ?: ""
-                val href = navPoint.selectFirst("content")?.attr("src")?.trim() ?: ""
+                val href = navPoint.selectFirst("content")?.attr("src")?.trim()?.urlDecoded() ?: ""
                 if (title.isNotEmpty() && href.isNotEmpty()) {
                     // Resolve path and then restore fragment (if present).
                     val pathPart = href.substringBefore("#")
@@ -433,7 +448,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
         useReaderImageScheme: Boolean,
         bodyOnly: Boolean,
     ): String {
-        val pathPart = chapterHref.substringBefore("#").trim()
+        val pathPart = chapterHref.substringBefore("#").trim().urlDecoded()
         val fragment = chapterHref.substringAfter("#", "").takeIf { it.isNotBlank() }
 
         val packagePath = getPackageHref()
@@ -458,7 +473,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
                     else -> return@forEach
                 }
 
-                val src = rawSrc.substringBefore("#").trim()
+                val src = rawSrc.substringBefore("#").trim().urlDecoded()
                 if (src.isBlank() || src.startsWith("http") || src.startsWith("//") || src.startsWith("data:")) {
                     return@forEach
                 }
@@ -499,7 +514,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
             document.select("link[rel=stylesheet]").forEach { link ->
                 val href = link.attr("href")
                 if (href.isNotBlank()) {
-                    val cssPath = resolveZipPath(imageBasePath, href)
+                    val cssPath = resolveZipPath(imageBasePath, href.urlDecoded())
                     try {
                         getInputStream(cssPath)?.use { stream ->
                             var cssText = stream.reader().readText()
@@ -514,7 +529,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
 
                                 val cssDir = getParentDirectory(cssPath)
                                 val assetPath =
-                                    resolveZipPath(cssDir, assetUrl.substringBefore("?").substringBefore("#"))
+                                    resolveZipPath(cssDir, assetUrl.substringBefore("?").substringBefore("#").urlDecoded())
                                 inlineAssetAsDataUri(assetPath)?.let { "url('$it')" } ?: match.value
                             }
 
@@ -532,7 +547,7 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
             document.select("script[src]").forEach { script ->
                 val src = script.attr("src")
                 if (src.isNotBlank() && !src.startsWith("http") && !src.startsWith("//")) {
-                    val jsPath = resolveZipPath(imageBasePath, src)
+                    val jsPath = resolveZipPath(imageBasePath, src.urlDecoded())
                     try {
                         getInputStream(jsPath)?.use { stream ->
                             val jsText = stream.reader().readText()
@@ -597,17 +612,69 @@ class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
         }.distinct()
 
         for (candidate in candidates) {
-            document.getElementById(candidate)?.outerHtml()?.let { return it }
+            document.getElementById(candidate)?.let { element ->
+                materializeFragmentElement(element)?.let { return it }
+            }
 
             val escaped = candidate
                 .replace("\\", "\\\\")
                 .replace("\"", "\\\"")
             document
                 .selectFirst("*[id=\"$escaped\"], *[name=\"$escaped\"]")
-                ?.outerHtml()
-                ?.let { return it }
+                ?.let { element ->
+                    materializeFragmentElement(element)?.let { return it }
+                }
         }
 
         return null
+    }
+
+    private fun materializeFragmentElement(element: Element): String? {
+        findHeadingElement(element)?.let { heading ->
+            return extractHeadingSectionHtml(heading)
+        }
+
+        if (isMeaningfulFragmentElement(element)) {
+            return element.outerHtml()
+        }
+
+        return null
+    }
+
+    private fun findHeadingElement(element: Element): Element? {
+        return if (isHeadingTag(element.tagName())) {
+            element
+        } else {
+            element.parents().firstOrNull { isHeadingTag(it.tagName()) }
+        }
+    }
+
+    private fun extractHeadingSectionHtml(heading: Element): String? {
+        val headingLevel = heading.tagName().removePrefix("h").toIntOrNull() ?: return heading.outerHtml()
+        val section = Element("div")
+
+        var node: org.jsoup.nodes.Node? = heading
+        while (node != null) {
+            if (node !== heading && node is Element && isHeadingTag(node.tagName())) {
+                val siblingHeadingLevel = node.tagName().removePrefix("h").toIntOrNull() ?: Int.MAX_VALUE
+                if (siblingHeadingLevel <= headingLevel) break
+            }
+
+            section.appendChild(node.clone())
+            node = node.nextSibling()
+        }
+
+        return section.html().ifBlank { heading.outerHtml() }
+    }
+
+    private fun isMeaningfulFragmentElement(element: Element): Boolean {
+        val text = element.text().trim()
+        if (text.length >= 80) return true
+
+        return element.select("p, div, section, article, table, ul, ol, blockquote, pre, figure, img, svg").isNotEmpty()
+    }
+
+    private fun isHeadingTag(tagName: String): Boolean {
+        return tagName.length == 2 && tagName[0] == 'h' && tagName[1] in '1'..'6'
     }
 }
