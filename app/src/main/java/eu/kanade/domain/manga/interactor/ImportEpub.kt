@@ -18,6 +18,7 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.UUID
 
 class ImportEpub(
     private val storageManager: StorageManager = Injekt.get(),
@@ -48,6 +49,7 @@ class ImportEpub(
         val successCount: Int,
         val errorCount: Int,
         val errors: List<String>,
+        val importedUris: List<Uri>,
     )
 
     suspend fun execute(
@@ -57,57 +59,79 @@ class ImportEpub(
         combineAsOne: Boolean,
         autoAddToLibrary: Boolean,
         categoryId: Long?,
+        forceUniqueFolderName: Boolean = false,
         onProgress: (current: Int, total: Int, fileName: String) -> Unit,
     ): Result = withContext(Dispatchers.IO) {
         val errors = mutableListOf<String>()
         var successCount = 0
         val importedNovelUrls = mutableListOf<String>()
+        val importedUris = mutableListOf<Uri>()
 
         val localNovelsDir = storageManager.getLocalNovelSourceDirectory()
-            ?: return@withContext Result(0, files.size, listOf("Local novels directory not found"))
+            ?: return@withContext Result(
+                successCount = 0,
+                errorCount = files.size,
+                errors = listOf("Local novels directory not found"),
+                importedUris = emptyList(),
+            )
 
         if (combineAsOne && files.size > 1) {
             onProgress(1, 1, customTitle ?: files.first().title)
             try {
                 val novelTitle = customTitle ?: files.first().fileName.substringBeforeLast('.', files.first().fileName)
                 val sanitizedTitle = sanitizeFileName(novelTitle)
-                val novelDir = localNovelsDir.createDirectory(sanitizedTitle)
+                val novelFolderName = if (forceUniqueFolderName) {
+                    createUniqueFolderName(sanitizedTitle)
+                } else {
+                    sanitizedTitle
+                }
+                val novelDir = localNovelsDir.createDirectory(novelFolderName)
 
                 if (novelDir == null) {
                     errors.add("Failed to create directory for: $novelTitle")
                 } else {
-                    importedNovelUrls.add(sanitizedTitle)
+                    var copiedCount = 0
 
                     files.forEachIndexed { index, file ->
-                        val chapterFileName = "Chapter ${index + 1} - ${file.fileName}"
-                        val destFile = novelDir.createFile(chapterFileName)
-                        if (destFile != null) {
-                            context.contentResolver.openInputStream(file.uri)?.use { input ->
-                                destFile.openOutputStream().use { output -> input.copyTo(output) }
-                            }
+                        val chapterFileName = buildVolumeFileName(file, index)
+                        val copied = copyImportFileToDirectory(
+                            context = context,
+                            sourceFile = file,
+                            novelDir = novelDir,
+                            destinationFileName = chapterFileName,
+                            createFileErrorLabel = chapterFileName,
+                            errors = errors,
+                        )
+
+                        if (copied) {
+                            copiedCount++
+                            importedUris += file.uri
                         }
                     }
 
-                    files.firstOrNull()?.coverUri?.let {
+                    if (copiedCount > 0) {
+                        importedNovelUrls.add(novelFolderName)
+                    }
+
+                    files.firstNotNullOfOrNull { it.coverUri }?.let {
                         copyCoverToNovelDir(context, novelDir, it)
                     }
 
-                    val combinedDescription = files.mapNotNull { it.description }.firstOrNull { it.isNotBlank() }
-                    val combinedGenres = files.mapNotNull { it.genres }
-                        .flatMap { it.split(",") }
-                        .map { it.trim() }
-                        .filter { it.isNotBlank() }
-                        .distinct()
+                    val combinedDescription = buildCombinedDescription(files)
+                    val combinedGenres = mergeGenres(files)
+                    val combinedAuthor = mergeAuthors(files)
 
                     writeDetailsJson(
                         novelDir = novelDir,
                         title = novelTitle,
-                        author = files.firstOrNull()?.author,
+                        author = combinedAuthor,
                         description = combinedDescription,
                         genres = combinedGenres,
                     )
 
-                    successCount = 1
+                    if (copiedCount > 0) {
+                        successCount = 1
+                    }
                 }
             } catch (e: Exception) {
                 errors.add("Failed to combine files: ${e.message}")
@@ -118,29 +142,40 @@ class ImportEpub(
                 try {
                     val novelTitle = if (files.size == 1 && customTitle != null) customTitle else file.title
                     val sanitizedTitle = sanitizeFileName(novelTitle)
-                    var novelDir = localNovelsDir.findFile(sanitizedTitle)
-                    if (novelDir == null) {
-                        novelDir = localNovelsDir.createDirectory(sanitizedTitle)
+                    val novelFolderName = if (forceUniqueFolderName) {
+                        createUniqueFolderName(sanitizedTitle)
+                    } else {
+                        sanitizedTitle
+                    }
+                    var novelDir = if (forceUniqueFolderName) {
+                        localNovelsDir.createDirectory(novelFolderName)
+                    } else {
+                        localNovelsDir.findFile(novelFolderName) ?: localNovelsDir.createDirectory(novelFolderName)
                     }
 
                     if (novelDir == null) {
                         errors.add("Failed to create directory for: ${file.fileName}")
                     } else {
-                        importedNovelUrls.add(sanitizedTitle)
-                        val destFile = novelDir.createFile(file.fileName)
-                        if (destFile != null) {
-                            context.contentResolver.openInputStream(file.uri)?.use { input ->
-                                destFile.openOutputStream().use { output -> input.copyTo(output) }
-                            }
+                        val targetFileName = buildVolumeFileName(file)
+                        val copied = copyImportFileToDirectory(
+                            context = context,
+                            sourceFile = file,
+                            novelDir = novelDir,
+                            destinationFileName = targetFileName,
+                            createFileErrorLabel = file.fileName,
+                            errors = errors,
+                        )
+
+                        if (copied) {
+                            importedNovelUrls.add(novelFolderName)
+                            importedUris += file.uri
 
                             file.coverUri?.let {
                                 copyCoverToNovelDir(context, novelDir, it)
                             }
 
                             val genres = file.genres
-                                ?.split(",")
-                                ?.map { it.trim() }
-                                ?.filter { it.isNotBlank() }
+                                ?.let(::splitGenres)
                                 .orEmpty()
 
                             writeDetailsJson(
@@ -152,8 +187,6 @@ class ImportEpub(
                             )
 
                             successCount++
-                        } else {
-                            errors.add("Failed to create file: ${file.fileName}")
                         }
                     }
                 } catch (e: Exception) {
@@ -166,7 +199,12 @@ class ImportEpub(
             errors += registerImportedLocalNovels(importedNovelUrls.distinct(), categoryId)
         }
 
-        Result(successCount, errors.size, errors)
+        Result(
+            successCount = successCount,
+            errorCount = errors.size,
+            errors = errors,
+            importedUris = importedUris.distinct(),
+        )
     }
 
     private suspend fun registerImportedLocalNovels(
@@ -223,11 +261,89 @@ class ImportEpub(
         return name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(200)
     }
 
+    private fun createUniqueFolderName(baseName: String): String {
+        val safeBase = sanitizeFileName(baseName).ifBlank { "Imported EPUB" }
+        val suffix = "-" + UUID.randomUUID().toString().substring(0, 8)
+        val maxBaseLength = (200 - suffix.length).coerceAtLeast(1)
+        val trimmedBase = safeBase.take(maxBaseLength).trimEnd(' ', '.', '_')
+        return "$trimmedBase$suffix"
+    }
+
+    private fun buildVolumeFileName(file: ImportFile, orderIndex: Int? = null): String {
+        val rawExtension = file.fileName.substringAfterLast('.', "epub")
+        val extension = rawExtension
+            .lowercase()
+            .replace(Regex("[^a-z0-9]"), "")
+            .ifBlank { "epub" }
+
+        val rawTitle = file.title.ifBlank {
+            file.fileName.substringBeforeLast('.', file.fileName)
+        }
+        val sanitizedTitle = sanitizeFileName(rawTitle).ifBlank { "Volume" }
+
+        val orderedTitle = if (orderIndex != null) {
+            "${(orderIndex + 1).toString().padStart(3, '0')} - $sanitizedTitle"
+        } else {
+            sanitizedTitle
+        }
+
+        val maxStemLength = (200 - extension.length - 1).coerceAtLeast(1)
+        val stem = orderedTitle.take(maxStemLength).trimEnd(' ', '.', '_').ifBlank { "Volume" }
+
+        return "$stem.$extension"
+    }
+
     private fun copyCoverToNovelDir(context: Context, novelDir: UniFile, coverUri: Uri) {
         val coverDestFile = novelDir.createFile("cover.png") ?: return
         context.contentResolver.openInputStream(coverUri)?.use { input ->
             coverDestFile.openOutputStream().use { output -> input.copyTo(output) }
         }
+    }
+
+    private fun splitGenres(rawGenres: String): List<String> {
+        return rawGenres
+            .split(',', ';')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+    }
+
+    private fun mergeGenres(files: List<ImportFile>): List<String> {
+        val mergedGenres = linkedMapOf<String, String>()
+        files
+            .mapNotNull { it.genres }
+            .flatMap(::splitGenres)
+            .forEach { genre ->
+                mergedGenres.putIfAbsent(genre.lowercase(), genre)
+            }
+        return mergedGenres.values.toList()
+    }
+
+    private fun mergeAuthors(files: List<ImportFile>): String? {
+        val mergedAuthors = linkedMapOf<String, String>()
+        files
+            .mapNotNull { it.author?.trim()?.takeIf { author -> author.isNotBlank() } }
+            .forEach { author ->
+                mergedAuthors.putIfAbsent(author.lowercase(), author)
+            }
+        return mergedAuthors.values.joinToString(", ").takeIf { it.isNotBlank() }
+    }
+
+    private fun buildCombinedDescription(files: List<ImportFile>): String? {
+        val combinedEntries = files.mapIndexedNotNull { index, file ->
+            val description = file.description
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@mapIndexedNotNull null
+
+            val volumeTitle = file.title
+                .trim()
+                .ifBlank { file.fileName.substringBeforeLast('.', file.fileName).trim() }
+                .ifBlank { "Volume ${index + 1}" }
+
+            "(${index + 1})($volumeTitle): $description"
+        }
+
+        return combinedEntries.joinToString("\n\n").takeIf { it.isNotBlank() }
     }
 
     private fun writeDetailsJson(
@@ -253,5 +369,32 @@ class ImportEpub(
             append("}")
         }
         detailsFile.openOutputStream().use { it.write(payload.toByteArray()) }
+    }
+
+    private fun copyImportFileToDirectory(
+        context: Context,
+        sourceFile: ImportFile,
+        novelDir: UniFile,
+        destinationFileName: String,
+        createFileErrorLabel: String,
+        errors: MutableList<String>,
+    ): Boolean {
+        val destinationFile = novelDir.createFile(destinationFileName)
+        if (destinationFile == null) {
+            errors.add("Failed to create file: $createFileErrorLabel")
+            return false
+        }
+
+        val inputStream = context.contentResolver.openInputStream(sourceFile.uri)
+        if (inputStream == null) {
+            errors.add("Failed to read file: ${sourceFile.fileName}")
+            return false
+        }
+
+        inputStream.use { input ->
+            destinationFile.openOutputStream().use { output -> input.copyTo(output) }
+        }
+
+        return true
     }
 }
