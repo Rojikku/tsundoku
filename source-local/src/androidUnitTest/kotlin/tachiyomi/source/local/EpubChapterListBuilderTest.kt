@@ -101,7 +101,7 @@ class EpubChapterListBuilderTest {
     }
 
     @Test
-    fun `buildEpubChaptersFromToc skips navigation docs in spine when not in toc`() {
+    fun `buildEpubChaptersFromToc includes navigation docs in spine when not in toc`() {
         val chapters = buildEpubChaptersFromToc(
             mangaUrl = "local-novels/book",
             chapterFileName = "volume.epub",
@@ -122,8 +122,86 @@ class EpubChapterListBuilderTest {
             hasMultipleEpubFiles = false,
         )
 
-        assertEquals(1, chapters.size)
-        assertEquals("local-novels/book/volume.epub#text/chapter1.xhtml", chapters[0].url)
-        assertEquals("Chapter 1", chapters[0].name)
+        assertEquals(3, chapters.size)
+        assertEquals("local-novels/book/volume.epub#nav.xhtml", chapters[0].url)
+        assertEquals("local-novels/book/volume.epub#toc.xhtml", chapters[1].url)
+        assertEquals("local-novels/book/volume.epub#text/chapter1.xhtml", chapters[2].url)
+        assertEquals("nav", chapters[0].name)
+        assertEquals("toc", chapters[1].name)
+        assertEquals("Chapter 1", chapters[2].name)
+    }
+
+    @Test
+    fun `buildEpubChaptersFromToc handles multi-book EPUBs with repeating chapter titles`() {
+        // Validates that all TOC entries appear as chapters (no language-specific filtering)
+        // Multi-volume interleaving is prevented by the offset system, not by filtering
+        val tocChapters = listOf(
+            EpubReader.EpubChapter(title = "IL TRONO DI VETRO", href = "p009_half-title-01.xhtml", order = 0),
+            EpubReader.EpubChapter(title = "CAPITOLO 1", href = "p011_capitolo-01.xhtml", order = 1),
+            EpubReader.EpubChapter(title = "CAPITOLO 2", href = "p012_capitolo-02.xhtml", order = 2),
+            EpubReader.EpubChapter(title = "CAPITOLO 3", href = "p013_capitolo-03.xhtml", order = 3),
+            EpubReader.EpubChapter(title = "LA CORONA DI MEZZANOTTE", href = "p068_half-title-02.xhtml", order = 4),
+            EpubReader.EpubChapter(title = "PARTE PRIMA. La Campionessa del Re", href = "p070_parte-01.xhtml", order = 5),
+            EpubReader.EpubChapter(title = "CAPITOLO 1", href = "p071_capitolo-56.xhtml", order = 6),
+            EpubReader.EpubChapter(title = "CAPITOLO 2", href = "p072_capitolo-57.xhtml", order = 7),
+            EpubReader.EpubChapter(title = "CAPITOLO 3", href = "p073_capitolo-58.xhtml", order = 8),
+        )
+
+        val chapters = buildEpubChaptersFromToc(
+            mangaUrl = "local-novels/throne-of-glass",
+            chapterFileName = "volume1.epub",
+            chapterFileNameWithoutExtension = "volume1",
+            chapterLastModified = 123L,
+            tocChapters = tocChapters,
+            hasMultipleEpubFiles = false,
+        )
+
+        assertEquals(9, chapters.size)
+        assertEquals("IL TRONO DI VETRO", chapters[0].name)
+        assertEquals("CAPITOLO 1", chapters[1].name)
+        assertEquals("CAPITOLO 3", chapters[3].name)
+        assertEquals("LA CORONA DI MEZZANOTTE", chapters[4].name)
+        assertEquals("PARTE PRIMA. La Campionessa del Re", chapters[5].name)
+        assertEquals("CAPITOLO 1", chapters[6].name)
+
+        for (i in chapters.indices) {
+            assertEquals((i + 1).toFloat(), chapters[i].chapter_number)
+        }
+    }
+
+    @Test
+    fun `buildEpubChaptersFromToc supports volume offsets for multi epub sorting`() {
+        val volume1 = buildEpubChaptersFromToc(
+            mangaUrl = "local-novels/throne-of-glass",
+            chapterFileName = "volume1.epub",
+            chapterFileNameWithoutExtension = "volume1",
+            chapterLastModified = 123L,
+            tocChapters = listOf(
+                EpubReader.EpubChapter(title = "CAPITOLO 1", href = "v1-1.xhtml", order = 0),
+                EpubReader.EpubChapter(title = "CAPITOLO 2", href = "v1-2.xhtml", order = 1),
+            ),
+            hasMultipleEpubFiles = true,
+            chapterNumberOffset = 0f,
+        )
+
+        val volume2 = buildEpubChaptersFromToc(
+            mangaUrl = "local-novels/throne-of-glass",
+            chapterFileName = "volume2.epub",
+            chapterFileNameWithoutExtension = "volume2",
+            chapterLastModified = 124L,
+            tocChapters = listOf(
+                EpubReader.EpubChapter(title = "CAPITOLO 1", href = "v2-1.xhtml", order = 0),
+                EpubReader.EpubChapter(title = "CAPITOLO 2", href = "v2-2.xhtml", order = 1),
+            ),
+            hasMultipleEpubFiles = true,
+            chapterNumberOffset = 100_000f,
+        )
+
+        assertEquals(1f, volume1[0].chapter_number)
+        assertEquals(2f, volume1[1].chapter_number)
+        assertEquals(100_001f, volume2[0].chapter_number)
+        assertEquals(100_002f, volume2[1].chapter_number)
+        assertEquals("volume1 - CAPITOLO 1", volume1[0].name)
+        assertEquals("volume2 - CAPITOLO 1", volume2[0].name)
     }
 }
