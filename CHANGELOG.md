@@ -25,6 +25,7 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Shiny new import EPUB process [@mrissaoussama](https://github.com/mrissaoussama) [#177](https://github.com/tsundoku-otaku/tsundoku/pull/177)
 - Improved EPUB chapter parsing with multiple volumes and repeated chapter names [@mrissaoussama](https://github.com/mrissaoussama) [#182](https://github.com/tsundoku-otaku/tsundoku/pull/182)
 - Better detection of chapter lists from EPUBs [@mrissaoussama](https://github.com/mrissaoussama) [#178](https://github.com/tsundoku-otaku/tsundoku/pull/178)
+- Search prefixes, made case insensitive, and performance improvements [@mrissaoussama](https://github.com/mrissaoussama) [#189](https://github.com/tsundoku-otaku/tsundoku/pull/189)
 - Duplicate screen and mass import [@mrissaoussama](https://github.com/mrissaoussama) [#163](https://github.com/tsundoku-otaku/tsundoku/pull/163)
 - Mass import performance [@mrissaoussama](https://github.com/mrissaoussama) [#187](https://github.com/tsundoku-otaku/tsundoku/pull/187)
 - Show include/exclude icon on tag chips [@mrissaoussama](https://github.com/mrissaoussama) [#168](https://github.com/tsundoku-otaku/tsundoku/pull/168)

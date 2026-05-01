@@ -238,13 +238,9 @@ class LibraryScreenModel(
                     }
                 }
                 .map { data ->
-                    val favoritesById = HashMap<Long, LibraryItem>(data.favorites.size * 2)
-                    for (item in data.favorites) {
-                        favoritesById[item.id] = item
-                    }
                     data.favorites
                         .applyGrouping(data.categories, data.showSystemCategory)
-                        .applySort(favoritesById, data.tracksMap, data.loggedInTrackerIds)
+                        .applySort(itemCache, data.tracksMap, data.loggedInTrackerIds)
                 }
                 .collectLatest {
                     mutableState.update { state ->
@@ -375,18 +371,18 @@ class LibraryScreenModel(
             if (!novelPasses) return@fastFilter false
 
             // Tags filter (more expensive, so do it last)
-            val tagsPasses = if (normalizedIncluded.isEmpty() && normalizedExcluded.isEmpty()) {
+            val tagsPasses = if (
+                normalizedIncluded.isEmpty() &&
+                normalizedExcluded.isEmpty() &&
+                preferences.filterNoTags == TriState.DISABLED
+            ) {
                 true
             } else {
-                val mangaTags = it.libraryManga.manga.genre
-                    ?.map { tag -> tag.trim() }
-                    ?.filter { tag -> tag.isNotBlank() }
-                    ?: emptyList()
+                val mangaTags = it.libraryManga.manga.genre.orEmpty()
 
-                // Handle "No Tags" filter
                 val noTagsFilter = preferences.filterNoTags
                 if (noTagsFilter != TriState.DISABLED) {
-                    val hasNoTags = mangaTags.isEmpty()
+                    val hasNoTags = mangaTags.none { tag -> tag.isNotBlank() }
                     when (noTagsFilter) {
                         TriState.ENABLED_IS -> if (!hasNoTags) return@fastFilter false
                         TriState.ENABLED_NOT -> if (hasNoTags) return@fastFilter false
@@ -395,21 +391,23 @@ class LibraryScreenModel(
                 }
 
                 if (normalizedExcluded.isNotEmpty()) {
-                    val normalizedMangaTags = if (tagCaseSensitive) mangaTags else mangaTags.map { tag -> tag.lowercase() }
                     val hasExcludedTag = if (tagExcludeModeAnd) {
-                        normalizedExcluded.all { excludedTag -> normalizedMangaTags.any { it == excludedTag } }
+                        normalizedExcluded.all { excludedTag ->
+                            mangaTags.any { tag -> normalizeTag(tag, tagCaseSensitive) == excludedTag }
+                        }
                     } else {
-                        normalizedMangaTags.any { tag -> tag in normalizedExcluded }
+                        mangaTags.any { tag -> normalizeTag(tag, tagCaseSensitive) in normalizedExcluded }
                     }
                     if (hasExcludedTag) return@fastFilter false
                 }
 
                 if (normalizedIncluded.isNotEmpty()) {
-                    val normalizedMangaTags = if (tagCaseSensitive) mangaTags else mangaTags.map { tag -> tag.lowercase() }
                     val hasIncludedTag = if (tagIncludeModeAnd) {
-                        normalizedIncluded.all { includedTag -> normalizedMangaTags.any { it == includedTag } }
+                        normalizedIncluded.all { includedTag ->
+                            mangaTags.any { tag -> normalizeTag(tag, tagCaseSensitive) == includedTag }
+                        }
                     } else {
-                        normalizedMangaTags.any { tag -> tag in normalizedIncluded }
+                        mangaTags.any { tag -> normalizeTag(tag, tagCaseSensitive) in normalizedIncluded }
                     }
                     if (!hasIncludedTag) return@fastFilter false
                 }
@@ -428,22 +426,38 @@ class LibraryScreenModel(
         return result
     }
 
+    private fun normalizeTag(tag: String, caseSensitive: Boolean): String {
+        val trimmedTag = tag.trim()
+        return if (caseSensitive) trimmedTag else trimmedTag.lowercase()
+    }
+
     private fun List<LibraryItem>.applyGrouping(
         categories: List<Category>,
         showSystemCategory: Boolean,
     ): Map<Category, List</* LibraryItem */ Long>> {
-        val groupCache = mutableMapOf</* Category */ Long, MutableList</* LibraryItem */ Long>>()
+        val visibleCategories = ArrayList<Category>(categories.size)
+        for (category in categories) {
+            if (showSystemCategory || !category.isSystemCategory) {
+                visibleCategories += category
+            }
+        }
+        if (visibleCategories.isEmpty()) return emptyMap()
+
+        val visibleCategoryById = HashMap<Long, Category>(visibleCategories.size * 2)
+        val groupedItems = LinkedHashMap<Category, MutableList<Long>>(visibleCategories.size)
+        for (category in visibleCategories) {
+            visibleCategoryById[category.id] = category
+            groupedItems[category] = mutableListOf()
+        }
+
         for (item in this) {
-            val cats = item.libraryManga.categories
-            for (categoryId in cats) {
-                groupCache.getOrPut(categoryId) { ArrayList() }.add(item.id)
+            for (categoryId in item.libraryManga.categories) {
+                val category = visibleCategoryById[categoryId] ?: continue
+                groupedItems[category]?.add(item.id)
             }
         }
 
-        val visibleCategories = categories.filter { showSystemCategory || !it.isSystemCategory }
-        return visibleCategories.associateWith {
-            groupCache[it.id] ?: emptyList()
-        }
+        return groupedItems
     }
 
     private fun Map<Category, List</* LibraryItem */ Long>>.applySort(
