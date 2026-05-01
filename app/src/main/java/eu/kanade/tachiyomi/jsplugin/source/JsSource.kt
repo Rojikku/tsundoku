@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.jsplugin.model.InstalledJsPlugin
 import eu.kanade.tachiyomi.jsplugin.model.JsPlugin
+import eu.kanade.tachiyomi.jsplugin.resolveJsPluginSite
 import eu.kanade.tachiyomi.jsplugin.runtime.PluginRuntime
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.NetworkHelper
@@ -45,6 +46,7 @@ import java.util.concurrent.Executors
  */
 class JsSource(
     private val installedPlugin: InstalledJsPlugin,
+    private val siteOverride: String? = null,
 ) : CatalogueSource, ConfigurableSource, NovelSource {
 
     private val plugin: JsPlugin = installedPlugin.plugin
@@ -89,7 +91,9 @@ class JsSource(
     // Visible name of the source with language and JS marker
     override fun toString(): String = "$name (${lang.uppercase()}) (JS)"
 
-    val baseUrl: String = plugin.site?.takeIf { it.isNotBlank() }?.trimEnd('/') ?: "https://example.com"
+    val baseUrl: String = siteOverride?.trim()?.trimEnd('/').orEmpty()
+        .ifBlank { resolveJsPluginSite(metadataSite = plugin.site, code = jsCode) }
+        .ifBlank { "https://example.com" }
     val iconUrl: String = plugin.iconUrl
     val version: String = plugin.version
 
@@ -167,13 +171,27 @@ class JsSource(
 
         // Create new instance outside lock to avoid blocking
         val codeToUse = maybeHealCode(jsCode)
-        val runtime = PluginRuntime(pluginId, context, jsDispatcher)
+        val runtime = PluginRuntime(pluginId, context, jsDispatcher, baseUrl)
         val newInstance = try {
             runtime.executePlugin(codeToUse)
         } catch (e: Exception) {
             // If plugin execution fails, log and rethrow
             logcat(LogPriority.ERROR, e) { "JsSource[$pluginId]: Failed to execute plugin" }
             throw e
+        }
+
+        if (!siteOverride.isNullOrBlank()) {
+            val escapedSiteOverride = siteOverride
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+            newInstance.execute(
+                """
+                if (globalThis.plugin) {
+                    globalThis.plugin.site = '$escapedSiteOverride';
+                    globalThis.plugin.sourceSite = globalThis.plugin.site;
+                }
+                """.trimIndent(),
+            )
         }
 
         synchronized(instanceLock) {
@@ -209,6 +227,10 @@ class JsSource(
         jsExecutor.shutdown()
     }
 
+    fun withSiteOverride(site: String?): JsSource {
+        return JsSource(installedPlugin, site)
+    }
+
     /**
      * Execute a plugin method and return JSON result.
      * All JS execution happens on jsDispatcher to ensure JNI environment is consistent.
@@ -226,7 +248,21 @@ class JsSource(
         }
 
         val token = "tsundoku_${System.nanoTime()}"
+        val escapedSiteOverride = siteOverride
+            ?.takeIf { it.isNotBlank() }
+            ?.replace("\\", "\\\\")
+            ?.replace("'", "\\'")
         try {
+            if (escapedSiteOverride != null) {
+                instance.execute(
+                    """
+                    if (globalThis.plugin) {
+                        globalThis.plugin.site = '$escapedSiteOverride';
+                        globalThis.plugin.sourceSite = globalThis.plugin.site;
+                    }
+                    """.trimIndent(),
+                )
+            }
             logcat(LogPriority.DEBUG) { "JsSource[$pluginId]: Executing: $methodCall" }
 
             // Store result in global variable, handle Promise resolution in JS
@@ -1242,3 +1278,4 @@ class JsSource(
         }
     }
 }
+

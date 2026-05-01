@@ -1553,12 +1553,13 @@ class NovelWebViewViewer(val activity: ReaderActivity) : Viewer, TextToSpeech.On
         chapterName: String? = null,
         chapterUrl: String? = null,
     ) {
-        val plainTextMode = NovelViewerTextUtils.isPlainTextChapter(chapterUrl)
+        val normalizedChapterUrl = normalizeUrl(chapterUrl)
+        val plainTextMode = NovelViewerTextUtils.isPlainTextChapter(normalizedChapterUrl)
         // Strip script/style/noscript tags from content to prevent unwanted JS execution
         var cleanContent = if (plainTextMode) {
             NovelViewerTextUtils.normalizePlainTextContent(content)
         } else {
-            NovelViewerTextUtils.normalizeContentForHtml(content, chapterUrl)
+            NovelViewerTextUtils.normalizeContentForHtml(content, normalizedChapterUrl)
                 .replace(Regex("<script[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
                 .replace(Regex("<script[^>]*/>", RegexOption.IGNORE_CASE), "")
                 .replace(Regex("<style[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
@@ -1682,7 +1683,30 @@ class NovelWebViewViewer(val activity: ReaderActivity) : Viewer, TextToSpeech.On
             </html>
         """.trimIndent()
 
-        webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+        webView.loadDataWithBaseURL(resolveWebViewBaseUrl(normalizedChapterUrl), html, "text/html", "UTF-8", null)
+    }
+
+
+
+    private fun resolveWebViewBaseUrl(chapterUrl: String?): String? {
+        val repairedChapterUrl = normalizeUrl(chapterUrl)
+        val absoluteChapterUrl = repairedChapterUrl?.trim().takeUnless { it.isNullOrBlank() }
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+        if (absoluteChapterUrl != null) return absoluteChapterUrl
+
+        val novelUrl = normalizeUrl(activity.viewModel.manga?.url)?.trim().takeUnless { it.isNullOrBlank() }
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+        return novelUrl
+    }
+
+    private fun normalizeUrl(url: String?): String? {
+        val value = url?.trim().orEmpty()
+        if (value.isBlank()) return url
+        return when {
+            value.startsWith("https//") -> "https://" + value.removePrefix("https//")
+            value.startsWith("http//") -> "http://" + value.removePrefix("http//")
+            else -> value
+        }
     }
 
     private fun stripMediaTags(content: String): String {
@@ -1705,8 +1729,8 @@ class NovelWebViewViewer(val activity: ReaderActivity) : Viewer, TextToSpeech.On
             ?: loadedChapters.getOrNull(currentChapterIndex)?.chapter
         val chapterTitle = (chapter?.name ?: "").jsEscape()
         val chapterNumber = chapter?.chapter_number ?: -1f
-        val chapterUrl = (chapter?.url ?: "").jsEscape()
-        val novelUrl = (activity.viewModel.manga?.url ?: "").jsEscape()
+        val chapterUrl = normalizeUrl(chapter?.url).orEmpty().jsEscape()
+        val novelUrl = normalizeUrl(activity.viewModel.manga?.url).orEmpty().jsEscape()
 
         return """
             window.__TSUNDOKU_CHAPTER_TITLE = "$chapterTitle";
@@ -1809,6 +1833,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) : Viewer, TextToSpeech.On
     }
 
     private fun displayError(error: Throwable) {
+        android.util.Log.e("NovelWebViewViewer", "displayError: ${error.javaClass.simpleName}: ${error.message}", error)
         val theme = preferences.novelTheme.get()
         val backgroundColor = preferences.novelBackgroundColor.get()
         val fontColor = preferences.novelFontColor.get()
@@ -1818,7 +1843,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) : Viewer, TextToSpeech.On
         val bgColorHex = String.format("#%06X", 0xFFFFFF and finalBgColor)
         val textColorHex = String.format("#%06X", 0xFFFFFF and finalTextColor)
 
-        val escapedMessage = (error.message ?: "Unknown error")
+        val escapedMessage = "${error.javaClass.simpleName}: ${error.message ?: "(null)"}"
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
