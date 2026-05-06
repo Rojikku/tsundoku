@@ -27,6 +27,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import okio.Buffer
 import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
@@ -74,8 +75,12 @@ class JSLibraryProvider(
         setupStorage(runtime)
         setupCacheManagement(runtime)
 
-        // Inject the minimal JS runtime (polyfills + require)
-        val runtimeJs = getMinimalRuntime()
+        // Inject the protobuf runtime bundle first, then the minimal JS runtime (polyfills + require)
+        val runtimeJs = buildString {
+            append(loadProtobufJsBundle())
+            append('\n')
+            append(getMinimalRuntime())
+        }
         runtime.evaluate<Any?>(runtimeJs, "runtime.js", asModule = false)
 
         logcat(LogPriority.DEBUG) { "[$pluginId] JSLibraryProvider setup complete" }
@@ -87,13 +92,33 @@ class JSLibraryProvider(
         runtime.function("__clearCheerioCache") { _ ->
             elementCache.clear()
             handleCounter = 0
-            logcat(LogPriority.DEBUG) { "[$pluginId] Cheerio cache cleared from JS" }
             true
         }
 
         runtime.function("__trimCheerioCache") { _ ->
             trimCache(10)
             true
+        }
+    }
+
+    private fun loadProtobufJsBundle(): String {
+        return try {
+            val bundle = context.assets.open("js/vendor/protobuf.min.js")
+                .bufferedReader(StandardCharsets.UTF_8)
+                .use { it.readText() }
+
+            buildString {
+                append("(function(){\n")
+                append("var module = { exports: {} };\n")
+                append("var exports = module.exports;\n")
+                append(bundle)
+                append("\n;globalThis.protobufjs = module.exports;\n")
+                append("globalThis.parseProto = function(proto) { return module.exports.parse(proto); };\n")
+                append("})();\n")
+            }
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "[$pluginId] Failed to load protobufjs bundle from assets" }
+            ""
         }
     }
 
@@ -218,28 +243,50 @@ class JSLibraryProvider(
 
                 val body = extractBody(init, headersMap)
 
+                // Check if this is binary data encoded as base64
+                val isBinaryBase64 = headersMap.entries.any { it.key.equals("x-binary-base64", ignoreCase = true) && it.value.equals("true", ignoreCase = true) }
+
+
                 val requestBuilder = Request.Builder().url(normalizedUrl)
 
                 // Build headers - skip certain headers that OkHttp handles
                 val headersBuilder = Headers.Builder()
                 headersMap.forEach { (key, value) ->
                     val lowerKey = key.lowercase()
-                    if (lowerKey !in listOf("accept-encoding", "host", "connection", "content-length")) {
+                    if (lowerKey !in listOf("accept-encoding", "host", "connection", "content-length", "x-binary-base64")) {
                         headersBuilder.add(key, value)
                     }
                 }
                 requestBuilder.headers(headersBuilder.build())
 
+
+
                 // Set body for non-GET requests
                 if (method != "GET" && body != null) {
-                    requestBuilder.method(method, body.toRequestBody(detectContentType(headersMap)))
+                    if (isBinaryBase64) {
+                        try {
+                            val binaryData = Base64.decode(body, Base64.DEFAULT)
+                            requestBuilder.method(method, binaryData.toRequestBody("application/grpc-web+proto".toMediaType()))
+                        } catch (e: Exception) {
+                            requestBuilder.method(method, body.toRequestBody(detectContentType(headersMap)))
+                        }
+                    } else {
+                        requestBuilder.method(method, body.toRequestBody(detectContentType(headersMap)))
+                    }
                 } else if (method != "GET") {
                     requestBuilder.method(method, "".toRequestBody(null))
                 }
 
                 val response = client.newCall(requestBuilder.build()).execute()
                 response.use { resp ->
-                    val responseBody = resp.body?.string() ?: ""
+                    val responseBytes = resp.body?.bytes() ?: ByteArray(0)
+                    val responseText = if (isBinaryBase64) {
+                        Base64.encodeToString(responseBytes, Base64.NO_WRAP)
+                    } else {
+                        String(responseBytes, StandardCharsets.UTF_8)
+                    }
+
+
 
                     // Keep WebView cookie store in sync with OkHttp responses.
                     try {
@@ -257,13 +304,16 @@ class JSLibraryProvider(
                     resp.headers.forEach { (name, value) ->
                         responseHeaders[name.lowercase()] = value
                     }
+                    if (isBinaryBase64) {
+                        responseHeaders["x-binary-base64"] = "true"
+                    }
 
                     FetchResponse(
                         ok = resp.isSuccessful,
                         status = resp.code,
                         statusText = resp.message,
                         url = resp.request.url.toString(),
-                        text = responseBody,
+                        text = responseText,
                         headers = responseHeaders,
                     )
                 }
@@ -468,7 +518,6 @@ class JSLibraryProvider(
                 // If it's a JsObject or function, we can't use it as CSS selector.
                 // Return the original handle unchanged since filter functions aren't supported.
                 selectorArg.toString().startsWith("com.dokar.quickjs.binding.JsObject") -> {
-                    logcat(LogPriority.WARN) { "[$pluginId] cheerioFilter: function/object filters not supported, returning original handle" }
                     handle
                 }
                 else -> cheerioFilter(handle, selectorArg.toString())
@@ -539,7 +588,6 @@ class JSLibraryProvider(
         val doc = Jsoup.parse(html)
         val handle = ++handleCounter
         elementCache[handle] = doc
-        logcat(LogPriority.DEBUG) { "[$pluginId] cheerioLoad: created handle=$handle for ${html.length} chars HTML" }
         return handle
     }
 
@@ -600,7 +648,6 @@ class JSLibraryProvider(
                 val tagName = el.tagName().lowercase()
                 if (tagName == "script" || tagName == "style") {
                     val data = el.data()
-                    logcat(LogPriority.DEBUG) { "[$pluginId] cheerioHtml(script/style): returning raw data (len=${data.length}): ${data.take(100)}..." }
                     data
                 } else {
                     el.html()
@@ -612,7 +659,6 @@ class JSLibraryProvider(
                     val tagName = first.tagName().lowercase()
                     if (tagName == "script" || tagName == "style") {
                         val data = first.data()
-                        logcat(LogPriority.DEBUG) { "[$pluginId] cheerioHtml(script/style): returning raw data (len=${data.length}): ${data.take(100)}..." }
                         data
                     } else {
                         first.html()
@@ -623,7 +669,6 @@ class JSLibraryProvider(
             }
             else -> ""
         }
-        // logcat(LogPriority.DEBUG) { "[$pluginId] cheerioHtml(handle=$handle): ${result.take(200)}..." }
         return result
     }
 
@@ -973,7 +1018,6 @@ class JSLibraryProvider(
         runtime.function("__storageGet") { args ->
             val key = args.getOrNull(0)?.toString() ?: ""
             val value = storage[key]
-            logcat(LogPriority.DEBUG) { "[$pluginId] storage.get('$key') -> '$value'" }
             value
         }
 
@@ -1130,19 +1174,34 @@ class JSLibraryProvider(
             var jsonStr = await __fetch(url, init || {});
             var r = JSON.parse(jsonStr);
             console.log('[FETCH] Response status=' + r.status + ', ok=' + r.ok + ', textLen=' + (r.text || '').length);
+            var isBinary = !!(r.headers && (r.headers['x-binary-base64'] === 'true' || r.headers['x-binary-base64'] === true));
             return {
                 ok: !!r.ok,
                 status: r.status || 0,
                 statusText: r.statusText || '',
                 url: r.url || url,
                 headers: new Headers(r.headers || {}),
-                text: async function() { return r.text || ''; },
+                text: async function() {
+                    if (!isBinary) return r.text || '';
+                    try {
+                        return atob(r.text || '');
+                    } catch (e) {
+                        return '';
+                    }
+                },
                 json: async function() { return JSON.parse(r.text || '{}'); },
                 arrayBuffer: async function() {
+                    if (isBinary) {
+                        var b64 = r.text || '';
+                        var bin = atob(b64);
+                        var out = new Uint8Array(bin.length);
+                        for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 255;
+                        return out.buffer;
+                    }
                     var text = r.text || '';
                     var buf = new ArrayBuffer(text.length);
                     var view = new Uint8Array(buf);
-                    for (var i = 0; i < text.length; i++) view[i] = text.charCodeAt(i);
+                    for (var j = 0; j < text.length; j++) view[j] = text.charCodeAt(j);
                     return buf;
                 },
                 blob: async function() { return new Blob([r.text || '']); },
@@ -1615,9 +1674,6 @@ class JSLibraryProvider(
                         fetchText: async function(u, i, enc) {
                             var r = await fetch(u, i);
                             var text = await r.text();
-                            // Handle encoding if specified
-                            if (enc && enc.toLowerCase() !== 'utf-8') {
-                            }
                             return text;
                         },
                         fetchFile: async function(u, i) {
@@ -1630,9 +1686,136 @@ class JSLibraryProvider(
                                 return '';
                             }
                         },
-                        fetchProto: async function(u, i) {
-                            var r = await fetch(u, i);
-                            return r.arrayBuffer();
+                        /**
+                         * Generic fetchProto using protobufjs for encoding/decoding.
+                         * This avoids Kotlin-side JsObject conversion issues.
+                         */
+                        fetchProto: async function(protoConfig, url, options) {
+                            // Generic fetchProto using protobufjs for encoding/decoding
+                            // protoConfig: { proto: string, requestType: string, responseType: string, requestData: object }
+                            if (!protoConfig || !protoConfig.requestData) {
+                                console.warn('fetchProto: missing config or requestData');
+                                return { items: [] };
+                            }
+
+                            try {
+                                // Parse proto schema with protobufjs
+                                var protoRoot = parseProto(protoConfig.proto).root;
+                                if (!protoRoot || !protoRoot.lookupType) {
+                                    console.warn('fetchProto: failed to parse proto schema');
+                                    return { items: [] };
+                                }
+
+                                // Encode request with protobufjs
+                                var RequestMessage = protoRoot.lookupType(protoConfig.requestType);
+                                if (!RequestMessage) {
+                                    console.warn('fetchProto: unknown request type: ' + protoConfig.requestType);
+                                    return { items: [] };
+                                }
+
+                                // Verify and encode request data
+                                var verification = RequestMessage.verify(protoConfig.requestData);
+                                if (verification) {
+                                    console.warn('fetchProto: invalid request data: ' + verification);
+                                    return { items: [] };
+                                }
+
+                                var encodedMsg = RequestMessage.encode(protoConfig.requestData).finish();
+                                console.warn('fetchProto: encoded ' + protoConfig.requestType + ': ' + encodedMsg.length + ' bytes');
+
+                                // Wrap in gRPC-web frame: [compression:1][length:4][data]
+                                var frame = new Uint8Array(5 + encodedMsg.length);
+                                frame[0] = 0;  // compression flag
+                                frame[1] = (encodedMsg.length >>> 24) & 0xff;
+                                frame[2] = (encodedMsg.length >>> 16) & 0xff;
+                                frame[3] = (encodedMsg.length >>> 8) & 0xff;
+                                frame[4] = encodedMsg.length & 0xff;
+                                for (var i = 0; i < encodedMsg.length; i++) {
+                                    frame[5 + i] = encodedMsg[i];
+                                }
+
+                                // Send request
+                                var mergedOptions = options || {};
+                                mergedOptions.headers = mergedOptions.headers || {};
+                                mergedOptions.headers['Content-Type'] = 'application/grpc-web+proto';
+                                mergedOptions.headers['X-Binary-Base64'] = 'true';
+                                mergedOptions.method = 'POST';
+                                var frameBin = '';
+                                for (var f = 0; f < frame.length; f++) {
+                                    frameBin += String.fromCharCode(frame[f] & 255);
+                                }
+                                mergedOptions.body = btoa(frameBin);
+
+                                console.warn('fetchProto: sending to ' + url);
+                                var response = await fetch(url, mergedOptions);
+
+                                if (!response.ok) {
+                                    console.warn('fetchProto: response not ok: ' + response.status);
+                                    return { items: [] };
+                                }
+
+                                // Get response as binary via arrayBuffer so we can unwrap grpc-web frames safely
+                                var arrayBuf = await response.arrayBuffer();
+                                if (!arrayBuf || arrayBuf.byteLength === 0) {
+                                    console.warn('fetchProto: empty response');
+                                    return { items: [] };
+                                }
+
+                                var respBytes = new Uint8Array(arrayBuf);
+                                console.warn('fetchProto: received ' + respBytes.length + ' bytes');
+
+                                // Unwrap gRPC-web frames
+                                var offset = 0;
+                                var payloadData = null;
+                                while (offset + 5 <= respBytes.length) {
+                                    var isCompressed = respBytes[offset];
+                                    var len = ((respBytes[offset + 1] << 24) | (respBytes[offset + 2] << 16) |
+                                              (respBytes[offset + 3] << 8) | respBytes[offset + 4]) >>> 0;
+                                    offset += 5;
+
+                                    if (len > 0 && offset + len <= respBytes.length) {
+                                        if (isCompressed === 0) {  // uncompressed
+                                            payloadData = respBytes.subarray(offset, offset + len);
+                                        }
+                                        offset += len;
+                                    } else if (len === 0) {
+                                        // trailers
+                                        break;
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                if (!payloadData || payloadData.length === 0) {
+                                    console.warn('fetchProto: no payload after unwrap');
+                                    return { items: [] };
+                                }
+
+                                console.warn('fetchProto: unwrapped payload: ' + payloadData.length + ' bytes');
+
+                                // Decode response with protobufjs
+                                var ResponseMessage = protoRoot.lookupType(protoConfig.responseType);
+                                if (!ResponseMessage) {
+                                    console.warn('fetchProto: unknown response type: ' + protoConfig.responseType);
+                                    return { items: [] };
+                                }
+
+                                var decodedMsg = ResponseMessage.decode(payloadData);
+                                var result = ResponseMessage.toObject(decodedMsg, {
+                                    longs: String,
+                                    enums: String,
+                                    bytes: String,
+                                    defaults: true
+                                });
+
+                                console.warn('fetchProto: successfully decoded ' + protoConfig.responseType);
+                                return result;
+
+                            } catch (e) {
+                                console.warn('fetchProto error: ' + (e && e.message ? e.message : String(e)));
+                                console.warn('fetchProto stack: ' + (e && e.stack ? e.stack : 'no stack'));
+                                return { items: [] };
+                            }
                         }
                     };
                 case '@libs/novelStatus':
@@ -1746,8 +1929,7 @@ class JSLibraryProvider(
                 case 'urlencode':
                     return { encode: encodeURIComponent, decode: decodeURIComponent };
                 case 'protobufjs':
-                    // Stub for protobufjs - most plugins don't need full support
-                    return {
+                    return globalThis.protobufjs || {
                         parse: function() { return { root: {} }; },
                         Root: { fromJSON: function() { return {}; } }
                     };

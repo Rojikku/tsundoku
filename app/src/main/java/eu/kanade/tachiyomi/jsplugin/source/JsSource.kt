@@ -850,7 +850,7 @@ class JsSource(
                 )
                 genre = obj["genres"]?.jsonPrimitive?.content?.decodeEntities()
                     ?: obj["tags"]?.jsonPrimitive?.content?.decodeEntities()
-                    ?: obj["genre"]?.jsonPrimitive?.content?.decodeEntities()
+                        ?: obj["genre"]?.jsonPrimitive?.content?.decodeEntities()
                 // Parse alternative names if available
                 val altNames = obj["alternativeNames"]?.jsonPrimitive?.content?.decodeEntities()
                     ?: obj["altNames"]?.jsonPrimitive?.content?.decodeEntities()
