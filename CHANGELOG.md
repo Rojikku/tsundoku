@@ -45,6 +45,7 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Fixed MAL login [@mrissaoussama](https://github.com/mrissaoussama) [#174](https://github.com/tsundoku-otaku/tsundoku/pull/174)
 - Download count badge and its visibility [@mrissaoussama](https://github.com/mrissaoussama) [#194](https://github.com/tsundoku-otaku/tsundoku/pull/194)
 - Webview scrollbar [@mrissaoussama](https://github.com/mrissaoussama) [#183](https://github.com/tsundoku-otaku/tsundoku/pull/183)
+- Fix added MD support (accidental reversion)  [@Rojikku](https://github.com/Rojikku) [#195](https://github.com/tsundoku-otaku/tsundoku/pull/195)
 - Snippet code field should focus when editing [@mrissaoussama](https://github.com/mrissaoussama) [#167](https://github.com/tsundoku-otaku/tsundoku/pull/167)
 - JS Plugin entries now refresh with global updates [@mrissaoussama](https://github.com/mrissaoussama) [#151](https://github.com/tsundoku-otaku/tsundoku/pull/151)
 - JS when using infinite scroll now applies [@mrissaoussama](https://github.com/mrissaoussama) [#162](https://github.com/tsundoku-otaku/tsundoku/pull/162)
