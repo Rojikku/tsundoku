@@ -882,7 +882,8 @@ class Downloader(
     }
 
     /**
-     * Archive the chapter pages as a CBZ.
+     * Archives a chapter into a compressed file.
+     * Novels are archived as .zip files, manga chapters as .cbz files.
      */
     private fun archiveChapter(
         mangaDir: UniFile,
@@ -890,14 +891,15 @@ class Downloader(
         tmpDir: UniFile,
         isNovel: Boolean = false,
     ) {
-        val zip = mangaDir.createFile("$dirname.cbz$TMP_DIR_SUFFIX")!!
+        val extension = if (isNovel) "zip" else "cbz"
+        val zip = mangaDir.createFile("$dirname.$extension$TMP_DIR_SUFFIX")!!
         val compressionLevel = if (isNovel) novelDownloadPreferences.zipCompressionLevel().get() else 0
         ZipWriter(context, zip, compressionLevel).use { writer ->
             tmpDir.listFiles()?.forEach { file ->
                 writer.write(file)
             }
         }
-        zip.renameTo("$dirname.cbz")
+        zip.renameTo("$dirname.$extension")
         tmpDir.delete()
     }
 
