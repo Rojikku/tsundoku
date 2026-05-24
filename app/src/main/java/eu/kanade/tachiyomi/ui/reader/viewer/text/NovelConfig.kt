@@ -10,6 +10,9 @@ import eu.kanade.tachiyomi.ui.reader.viewer.navigation.LNavigation
 import eu.kanade.tachiyomi.ui.reader.viewer.navigation.RightAndLeftNavigation
 import eu.kanade.tachiyomi.ui.reader.viewer.navigation.CenterNavigation
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -18,12 +21,19 @@ class NovelConfig(
     readerPreferences: ReaderPreferences = Injekt.get(),
 ) : ViewerConfig(readerPreferences, scope) {
 
+    // suppress tap-zone preview on initial flow emit during construction
+    private var initialNavigationConsumed = false
+
     init {
         readerPreferences.navigationModeNovel
             .register({ navigationMode = it }, { updateNavigation(navigationMode) })
 
         readerPreferences.novelNavInverted
             .register({ tappingInverted = it }, { navigator.invertMode = it })
+        readerPreferences.novelNavInverted.changes()
+            .drop(1)
+            .onEach { navigationModeChangedListener?.invoke() }
+            .launchIn(scope)
     }
 
     override var navigator: ViewerNavigation = defaultNavigation()
@@ -46,6 +56,10 @@ class NovelConfig(
             ReaderPreferences.TAPZONE_DISABLED_INDEX -> DisabledNavigation()
             else -> defaultNavigation()
         }
-        navigationModeChangedListener?.invoke()
+        if (initialNavigationConsumed) {
+            navigationModeChangedListener?.invoke()
+        } else {
+            initialNavigationConsumed = true
+        }
     }
 }
