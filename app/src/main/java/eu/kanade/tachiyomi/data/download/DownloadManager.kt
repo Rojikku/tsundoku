@@ -105,6 +105,25 @@ class DownloadManager(
     }
 
     /**
+     * Novel groups that are individually paused.
+     */
+    val pausedNovelMangaIds get() = downloader.pausedNovelMangaIds
+
+    /**
+     * Pauses downloads for a single novel group.
+     */
+    fun pauseNovelGroup(mangaId: Long) {
+        downloader.pauseNovelGroup(mangaId)
+    }
+
+    /**
+     * Resumes downloads for a single novel group.
+     */
+    fun resumeNovelGroup(mangaId: Long) {
+        downloader.resumeNovelGroup(mangaId)
+    }
+
+    /**
      * Empties the download queue.
      */
     fun clearQueue() {
@@ -330,8 +349,8 @@ class DownloadManager(
         if (wasRunning) {
             if (queueState.value.isEmpty()) {
                 downloader.stop()
-            } else if (queueState.value.isNotEmpty()) {
-                downloader.start()
+            } else {
+                DownloadJob.start(context)
             }
         }
     }

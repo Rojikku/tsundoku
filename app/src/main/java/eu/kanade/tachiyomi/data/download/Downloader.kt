@@ -108,6 +108,13 @@ class Downloader(
     val queueState = _queueState.asStateFlow()
 
     /**
+     * Novel manga ids whose downloads are individually paused, independent of the global queue
+     * state. Downloads of these groups are excluded from the active set while the queue runs.
+     */
+    private val _pausedNovelMangaIds = MutableStateFlow<Set<Long>>(emptySet())
+    val pausedNovelMangaIds = _pausedNovelMangaIds.asStateFlow()
+
+    /**
      * Notifier for the downloader state and progress.
      */
     private val notifier by lazy { DownloadNotifier(context) }
@@ -216,6 +223,25 @@ class Downloader(
     }
 
     /**
+     * Pauses downloads for a single novel group without affecting the rest of the queue.
+     */
+    fun pauseNovelGroup(mangaId: Long) {
+        _pausedNovelMangaIds.update { it + mangaId }
+        // activeDownloadsFlow will re-evaluate and cancel the in-flight job; status reset
+        // happens in launchDownloadJob's CancellationException handler to avoid a race.
+    }
+
+    /**
+     * Resumes a previously paused novel group, starting the downloader if it isn't running.
+     */
+    fun resumeNovelGroup(mangaId: Long) {
+        _pausedNovelMangaIds.update { it - mangaId }
+        if (!isRunning && !isPaused) {
+            DownloadJob.start(context)
+        }
+    }
+
+    /**
      * Prepares the subscriptions to start downloading.
      */
     private fun launchDownloaderJob() {
@@ -226,7 +252,11 @@ class Downloader(
                 queueState,
                 downloadPreferences.parallelSourceLimit.changes(),
                 novelDownloadPreferences.parallelNovelDownloads().changes(),
-            ) { a, b, c -> Triple(a, b, c) }.transformLatest { (queue, parallelCount, parallelNovelCount) ->
+                // Re-evaluate the active set whenever a group is paused/resumed.
+                _pausedNovelMangaIds,
+            ) { queue, parallelCount, parallelNovelCount, _ ->
+                Triple(queue, parallelCount, parallelNovelCount)
+            }.transformLatest { (queue, parallelCount, parallelNovelCount) ->
                 while (true) {
                     val maxMangaActiveSources = parallelCount.coerceAtLeast(1)
                     val maxNovelActiveManga = parallelNovelCount.coerceAtLeast(1)
@@ -242,6 +272,7 @@ class Downloader(
                             if (download.status.value > Download.State.DOWNLOADING.value) continue
 
                             if (download.source.isNovelSource()) {
+                                if (download.mangaId in _pausedNovelMangaIds.value) continue
                                 if (novelActiveCount >= maxNovelActiveManga) continue
                                 if (usedNovelMangaIds.add(download.mangaId)) {
                                     add(download)
@@ -373,12 +404,24 @@ class Downloader(
                 stop()
             }
         } catch (e: Throwable) {
-            if (e is CancellationException) throw e
+            if (e is CancellationException) {
+                // Job cancelled (e.g. novel group paused) — reset to QUEUE so it isn't stranded
+                // in DOWNLOADING with no active job. Done here to avoid racing with the coroutine.
+                if (download.status == Download.State.DOWNLOADING) {
+                    download.status = Download.State.QUEUE
+                }
+                throw e
+            }
             logcat(LogPriority.ERROR, e)
 
             // Mark only this download as failed and continue the queue.
             download.setError(e)
             download.status = Download.State.ERROR
+
+            // If nothing else is pending, stop so the queue doesn't sit "running" with only errors.
+            if (areAllDownloadsFinished()) {
+                stop()
+            }
         }
     }
 
@@ -470,9 +513,9 @@ class Downloader(
                         }
                     }
                     DownloadJob.start(context)
-                } else if (!autoStart && !isRunning && novelDownloadPreferences.resumeQueueOnNewChapters().get()) {
-                    // Resume paused queue when new chapters are added, if preference enabled
-                    logcat(LogPriority.INFO) { "Resuming download queue: new chapters added while paused" }
+                } else if (!isRunning && novelDownloadPreferences.resumeQueueOnNewChapters().get()) {
+                    // Resume paused/stopped queue when new chapters are added, if preference enabled.
+                    logcat(LogPriority.INFO) { "Resuming download queue: new chapters added while not running" }
                     DownloadJob.start(context)
                 }
             }
@@ -486,6 +529,7 @@ class Downloader(
      */
     private suspend fun downloadChapter(download: Download) {
         val mangaDir = provider.getMangaDir(download.mangaTitle, download.source).getOrElse { e ->
+            download.setError(e)
             download.status = Download.State.ERROR
             notifier.onError(e.message, download.chapterName, download.mangaTitle, download.mangaId)
             return
@@ -493,9 +537,10 @@ class Downloader(
 
         val availSpace = DiskUtil.getAvailableStorageSpace(mangaDir)
         if (availSpace != -1L && availSpace < MIN_DISK_SPACE) {
+            download.error = context.stringResource(MR.strings.download_insufficient_space)
             download.status = Download.State.ERROR
             notifier.onError(
-                context.stringResource(MR.strings.download_insufficient_space),
+                download.error,
                 download.chapterName,
                 download.mangaTitle,
                 download.mangaId,
@@ -571,7 +616,21 @@ class Downloader(
             // Do after download completes
 
             if (!isDownloadSuccessful(download, tmpDir)) {
+                val pageError = download.pages
+                    ?.mapNotNull { (it.status as? Page.State.Error)?.error }
+                    ?.firstOrNull()
+                if (pageError != null) {
+                    download.setError(pageError)
+                } else {
+                    val failed = download.pages?.count { it.status !is Page.State.Ready } ?: 0
+                    download.error = context.stringResource(
+                        MR.strings.download_incomplete_error,
+                        failed,
+                        download.pages?.size ?: 0,
+                    )
+                }
                 download.status = Download.State.ERROR
+                notifier.onError(download.error, download.chapterName, download.mangaTitle, download.mangaId)
                 return
             }
 
@@ -622,6 +681,7 @@ class Downloader(
             if (error is CancellationException) throw error
             // If the page list threw, it will resume here
             logcat(LogPriority.ERROR, error)
+            download.setError(error)
             download.status = Download.State.ERROR
             notifier.onError(error.message, download.chapterName, download.mangaTitle, download.mangaId)
         }
@@ -1018,7 +1078,7 @@ class Downloader(
         addAllToQueue(downloads)
 
         if (wasRunning) {
-            start()
+            DownloadJob.start(context)
         }
     }
 

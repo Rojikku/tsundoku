@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Sort
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material3.Card
@@ -103,6 +105,7 @@ class DownloadQueueScreen(private val initialTab: Int = 0) : Screen() {
         val screenModel = rememberScreenModel { DownloadQueueScreenModel() }
         val mangaList by screenModel.state.collectAsState()
         val novelList by screenModel.novelState.collectAsState()
+        val pausedGroups by screenModel.pausedNovelMangaIds.collectAsState()
         val titleMaxLines by screenModel.titleMaxLines.collectAsState()
 
         val translationService = remember { Injekt.get<TranslationService>() }
@@ -615,6 +618,14 @@ class DownloadQueueScreen(private val initialTab: Int = 0) : Screen() {
                                     NovelDownloadCard(
                                         item = item,
                                         titleMaxLines = titleMaxLines,
+                                        isPaused = item.mangaId in pausedGroups,
+                                        onPauseResume = {
+                                            if (item.mangaId in pausedGroups) {
+                                                screenModel.resumeNovelGroup(item.mangaId)
+                                            } else {
+                                                screenModel.pauseNovelGroup(item.mangaId)
+                                            }
+                                        },
                                         onCancel = { screenModel.cancel(item.subItems) },
                                         onMoveToTop = {
                                             screenModel.reorder(
@@ -649,6 +660,8 @@ class DownloadQueueScreen(private val initialTab: Int = 0) : Screen() {
 private fun NovelDownloadCard(
     item: NovelDownloadItem,
     titleMaxLines: Int,
+    isPaused: Boolean,
+    onPauseResume: () -> Unit,
     onCancel: () -> Unit,
     onMoveToTop: () -> Unit,
     onMoveToBottom: () -> Unit,
@@ -656,6 +669,7 @@ private fun NovelDownloadCard(
     val context = LocalContext.current
     val errorLabel = stringResource(MR.strings.update_check_notification_download_error)
     var showMenu by remember { mutableStateOf(false) }
+    var errorsExpanded by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -670,7 +684,7 @@ private fun NovelDownloadCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -685,21 +699,23 @@ private fun NovelDownloadCard(
                     )
                     Text(
                         text = item.mangaTitle,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         maxLines = titleMaxLines,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "${item.downloadedChapters}/${item.totalChapters} chapters",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
 
                 Box {
-                    IconButton(onClick = { showMenu = true }) {
+                    IconButton(
+                        onClick = { showMenu = true },
+                        modifier = Modifier.size(32.dp),
+                    ) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
                             contentDescription = "More options",
@@ -711,7 +727,30 @@ private fun NovelDownloadCard(
                         onDismissRequest = { showMenu = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Move to top") },
+                            text = {
+                                Text(
+                                    stringResource(
+                                        if (isPaused) MR.strings.action_resume else MR.strings.action_pause,
+                                    ),
+                                )
+                            },
+                            onClick = {
+                                onPauseResume()
+                                showMenu = false
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = if (isPaused) {
+                                        Icons.Filled.PlayArrow
+                                    } else {
+                                        Icons.Outlined.Pause
+                                    },
+                                    contentDescription = null,
+                                )
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(TDMR.strings.novel_downloads_move_top)) },
                             onClick = {
                                 onMoveToTop()
                                 showMenu = false
@@ -724,7 +763,7 @@ private fun NovelDownloadCard(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("Move to bottom") },
+                            text = { Text(stringResource(TDMR.strings.novel_downloads_move_bottom)) },
                             onClick = {
                                 onMoveToBottom()
                                 showMenu = false
@@ -737,7 +776,7 @@ private fun NovelDownloadCard(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("Cancel") },
+                            text = { Text(stringResource(MR.strings.action_cancel)) },
                             onClick = {
                                 onCancel()
                                 showMenu = false
@@ -753,14 +792,14 @@ private fun NovelDownloadCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Progress bar
             LinearProgressIndicator(
                 progress = { item.overallProgress },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(8.dp)
+                    .height(5.dp)
                     .clip(MaterialTheme.shapes.small),
                 color = when {
                     item.hasError -> MaterialTheme.colorScheme.error
@@ -770,7 +809,7 @@ private fun NovelDownloadCard(
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Status row
             Row(
@@ -779,10 +818,11 @@ private fun NovelDownloadCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = item.statusText,
-                    style = MaterialTheme.typography.labelMedium,
+                    text = if (isPaused) stringResource(MR.strings.paused) else item.statusText,
+                    style = MaterialTheme.typography.labelSmall,
                     color = when {
                         item.hasError -> MaterialTheme.colorScheme.error
+                        isPaused -> MaterialTheme.colorScheme.onSurfaceVariant
                         item.isActive -> MaterialTheme.colorScheme.primary
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
@@ -802,31 +842,70 @@ private fun NovelDownloadCard(
 
                 Text(
                     text = "${(item.overallProgress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
-            val errorDetails: String? = remember(item.subItems) {
-                item.subItems.firstOrNull { it.status == Download.State.ERROR }
-                    ?.error
-                    ?.takeIf { it.isNotBlank() }
-            }
-            if (errorDetails != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = errorDetails,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable {
-                        context.copyToClipboard(
-                            label = errorLabel,
-                            content = errorDetails,
+            if (item.hasError) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(
+                            TDMR.strings.novel_downloads_failed_chapters,
+                            item.erroredDownloads.size,
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    IconButton(
+                        onClick = { context.copyToClipboard(errorLabel, item.fullErrorReport) },
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.ContentCopy,
+                            contentDescription = stringResource(TDMR.strings.novel_downloads_copy_error),
+                            tint = MaterialTheme.colorScheme.error,
                         )
-                    },
-                )
+                    }
+                }
+
+                val collapsedLimit = 2
+                val visibleErrors = if (errorsExpanded) {
+                    item.errorDetails
+                } else {
+                    item.errorDetails.take(collapsedLimit)
+                }
+                visibleErrors.forEach { (chapter, reason) ->
+                    Text(
+                        text = "$chapter: $reason",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                val hiddenCount = item.errorDetails.size - collapsedLimit
+                if (hiddenCount > 0) {
+                    Text(
+                        text = if (errorsExpanded) {
+                            stringResource(TDMR.strings.novel_downloads_show_less)
+                        } else {
+                            stringResource(TDMR.strings.novel_downloads_more_errors, hiddenCount)
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { errorsExpanded = !errorsExpanded }
+                            .padding(vertical = 4.dp),
+                    )
+                }
             }
         }
     }
