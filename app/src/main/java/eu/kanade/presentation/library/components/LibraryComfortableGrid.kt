@@ -21,6 +21,8 @@ internal fun LibraryComfortableGrid(
     searchQuery: String?,
     onGlobalSearchClicked: () -> Unit,
     titleMaxLines: Int = 2,
+    onLoadMore: (() -> Unit)? = null,
+    loadMoreKey: Long = 0,
 ) {
     LazyLibraryGrid(
         modifier = Modifier.fillMaxSize(),
@@ -64,5 +66,7 @@ internal fun LibraryComfortableGrid(
                 titleMaxLines = titleMaxLines,
             )
         }
+
+        loadMoreSentinel(loadMoreKey, onLoadMore)
     }
 }
