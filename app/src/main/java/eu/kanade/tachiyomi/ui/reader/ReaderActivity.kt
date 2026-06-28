@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -56,6 +57,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.core.util.ifSourcesLoaded
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.reader.DisplayRefreshHost
+import eu.kanade.presentation.reader.NovelStatusBar
 import eu.kanade.presentation.reader.OrientationSelectDialog
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
@@ -338,6 +340,13 @@ class ReaderActivity : BaseActivity() {
         val state by viewModel.state.collectAsState()
         val showPageNumber by readerPreferences.showPageNumber.collectAsState()
         val autoTranslateEnabled by readerPreferences.autoTranslate.collectAsState()
+        val novelStatusBarEnabled by readerPreferences.novelStatusBarEnabled.collectAsState()
+        val novelStatusBarShowTime by readerPreferences.novelStatusBarShowTime.collectAsState()
+        val novelStatusBarShowBattery by readerPreferences.novelStatusBarShowBattery.collectAsState()
+        val novelStatusBarShowChapter by readerPreferences.novelStatusBarShowChapter.collectAsState()
+        val novelStatusBarShowProgress by readerPreferences.novelStatusBarShowProgress.collectAsState()
+        val novelTtsControlsActive by readerPreferences.novelTtsControlsVisible.collectAsState()
+        val novelStatusBarChapterDisplay by readerPreferences.novelChapterTitleDisplay.collectAsState()
         val settingsScreenModel = remember {
             ReaderSettingsScreenModel(
                 readerState = viewModel.state,
@@ -361,6 +370,44 @@ class ReaderActivity : BaseActivity() {
             ContentOverlay(state = state)
 
             AppBars(state = state)
+
+            if (isNovelMode && !state.menuVisible && novelStatusBarEnabled) {
+                val chapter = state.novelVisibleChapter ?: state.currentChapter?.chapter
+                val chapterText: String? = chapter?.let { ch ->
+                    when (novelStatusBarChapterDisplay) {
+                        1 -> if (ch.chapter_number >= 0f) {
+                            val num = ch.chapter_number.let {
+                                if (it == it.toLong().toFloat()) it.toLong().toString() else it.toString()
+                            }
+                            "Ch. $num"
+                        } else {
+                            ch.name.take(24)
+                        }
+                        2 -> if (ch.chapter_number >= 0f) {
+                            val num = ch.chapter_number.let {
+                                if (it == it.toLong().toFloat()) it.toLong().toString() else it.toString()
+                            }
+                            "Ch. $num: ${ch.name.take(16)}"
+                        } else {
+                            ch.name.take(24)
+                        }
+                        else -> ch.name.take(24)
+                    }
+                }
+                val extraPad = if (novelTtsControlsActive) 56.dp else 0.dp
+                NovelStatusBar(
+                    chapterText = chapterText,
+                    progressPercent = state.novelProgressPercent,
+                    showTime = novelStatusBarShowTime,
+                    showBattery = novelStatusBarShowBattery,
+                    showChapter = novelStatusBarShowChapter,
+                    showProgress = novelStatusBarShowProgress,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 8.dp + extraPad),
+                )
+            }
         }
 
         val onDismissRequest = viewModel::closeDialog
