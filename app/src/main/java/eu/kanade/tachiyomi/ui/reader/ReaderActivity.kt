@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,7 +41,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
@@ -96,6 +94,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.text.shared.ThemeUtils
 import eu.kanade.tachiyomi.ui.reader.viewer.text.textview.NovelViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.text.webview.NovelWebViewViewer
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
@@ -131,6 +130,7 @@ import uy.kohesive.injekt.api.get
 import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
+import androidx.compose.ui.graphics.Color as ComposeColor
 
 class ReaderActivity : BaseActivity() {
 
@@ -400,24 +400,11 @@ class ReaderActivity : BaseActivity() {
                         else -> ch.name
                     }
                 }
-                val readerBgColor: ComposeColor = when (novelTheme) {
-                    "dark" -> ComposeColor(0xFF121212)
-                    "sepia" -> ComposeColor(0xFFF4ECD8)
-                    "black" -> ComposeColor.Black
-                    "grey" -> ComposeColor(0xFF292832)
-                    "light" -> ComposeColor.White
-                    "custom" -> if (novelBgColorInt != 0) ComposeColor(novelBgColorInt) else ComposeColor.White
-                    else -> MaterialTheme.colorScheme.surface // "app"
+                val (bgInt, textInt) = remember(novelTheme, novelBgColorInt, novelFontColorInt) {
+                    ThemeUtils.getThemeColors(this@ReaderActivity, readerPreferences, novelTheme)
                 }
-                val readerTextColor: ComposeColor = when (novelTheme) {
-                    "dark" -> ComposeColor(0xFFE0E0E0)
-                    "sepia" -> ComposeColor(0xFF5B4636)
-                    "black" -> ComposeColor(0xFFCCCCCC)
-                    "grey" -> ComposeColor(0xFFCCCCCC)
-                    "light" -> ComposeColor.Black
-                    "custom" -> if (novelFontColorInt != 0) ComposeColor(novelFontColorInt) else ComposeColor.Black
-                    else -> MaterialTheme.colorScheme.onSurface // "app"
-                }
+                val readerBgColor = ComposeColor(bgInt)
+                val readerTextColor = ComposeColor(textInt)
                 val extraPad = if (novelTtsControlsActive) 56.dp else 0.dp
                 NovelStatusBar(
                     chapterText = chapterText,
