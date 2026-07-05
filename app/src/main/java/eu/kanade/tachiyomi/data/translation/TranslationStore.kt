@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.data.translation
 
 import android.content.Context
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import tachiyomi.domain.translation.model.TranslationStatus
 import tachiyomi.domain.translation.model.TranslationTask

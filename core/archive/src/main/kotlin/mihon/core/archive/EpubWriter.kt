@@ -1,7 +1,6 @@
 package mihon.core.archive
 
 import org.jsoup.Jsoup
-import java.io.File
 import java.io.OutputStream
 import java.util.UUID
 import java.util.zip.CRC32

@@ -2,10 +2,7 @@ package eu.kanade.tachiyomi.data.translation
 
 import android.content.Context
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.manga.model.Manga
 import java.io.File
 
 /**

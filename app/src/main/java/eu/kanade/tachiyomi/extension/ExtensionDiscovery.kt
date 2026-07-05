@@ -1,8 +1,6 @@
 package eu.kanade.tachiyomi.extension
 
-import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.source.CatalogueSource
-import eu.kanade.tachiyomi.source.Source
 
 /**
  * Interface for discovering extensions at test time.

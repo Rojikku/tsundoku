@@ -2,6 +2,7 @@
 
 package eu.kanade.tachiyomi.ui.reader.viewer.text.shared
 
+import eu.kanade.tachiyomi.ui.reader.viewer.text.shared.HtmlUtils.titlePatterns
 import logcat.LogPriority
 import logcat.logcat
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor

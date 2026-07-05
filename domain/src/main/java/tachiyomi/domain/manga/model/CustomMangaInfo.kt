@@ -4,6 +4,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import tachiyomi.domain.manga.model.CustomMangaInfo.Companion.MEMO_KEY
+import tachiyomi.domain.manga.model.CustomMangaInfo.Companion.SOURCE_KEY
 
 /**
  * Per-field user overrides for a manga's source-fetched metadata. Stored inside the manga's

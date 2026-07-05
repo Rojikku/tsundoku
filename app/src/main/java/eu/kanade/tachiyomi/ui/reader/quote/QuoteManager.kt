@@ -3,14 +3,12 @@ package eu.kanade.tachiyomi.ui.reader.quote
 import android.content.Context
 import com.hippo.unifile.UniFile
 import kotlinx.serialization.SerializationException
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import logcat.logcat
 import tachiyomi.domain.storage.service.StorageManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.io.File
 import java.io.IOException
 
 /**

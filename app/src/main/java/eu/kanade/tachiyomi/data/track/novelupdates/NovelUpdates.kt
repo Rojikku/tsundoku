@@ -1,8 +1,6 @@
 package eu.kanade.tachiyomi.data.track.novelupdates
 
-import android.graphics.Color
 import dev.icerock.moko.resources.StringResource
-import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.BaseTracker

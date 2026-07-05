@@ -3,12 +3,10 @@ package eu.kanade.tachiyomi.data.cache
 import android.content.Context
 import eu.kanade.tachiyomi.ui.library.ExtensionInfo
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
-import java.io.IOException
 
 /**
  * Cache for library settings data (extensions, tags) to avoid expensive DB queries

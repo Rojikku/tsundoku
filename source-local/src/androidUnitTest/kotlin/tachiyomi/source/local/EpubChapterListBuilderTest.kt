@@ -4,6 +4,7 @@ import mihon.core.archive.EpubReader
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.util.Collections.emptyList
 
 class EpubChapterListBuilderTest {
 

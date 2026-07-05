@@ -3,7 +3,6 @@ package eu.kanade.domain.source.service
 import eu.kanade.domain.source.interactor.SetMigrateSorting
 import eu.kanade.domain.source.model.FilterPresetList
 import eu.kanade.tachiyomi.util.system.LocaleHelper
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import mihon.domain.migration.models.MigrationFlag
 import tachiyomi.core.common.preference.Preference

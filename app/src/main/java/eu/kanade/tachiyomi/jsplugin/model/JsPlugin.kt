@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.jsplugin.model
 
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**

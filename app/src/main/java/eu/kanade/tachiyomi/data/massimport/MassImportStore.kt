@@ -4,6 +4,7 @@ package eu.kanade.tachiyomi.data.massimport
 
 import android.content.Context
 import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.data.massimport.MassImportStore.loadErrors
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import logcat.LogPriority

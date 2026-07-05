@@ -1,6 +1,5 @@
 package tachiyomi.domain.translation.service
 
-import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 
 /**
