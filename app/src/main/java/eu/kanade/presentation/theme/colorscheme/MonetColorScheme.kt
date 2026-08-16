@@ -12,11 +12,21 @@ import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
 import com.materialkolor.ktx.DynamicScheme
 import com.materialkolor.toColorScheme
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 
 internal class MonetColorScheme(context: Context) : BaseColorScheme() {
 
     private val monet = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        MonetSystemColorScheme(context)
+        try {
+            MonetSystemColorScheme(context)
+        } catch (e: Throwable) {
+            // Some Android 14 OEM builds throw Resources$NotFoundException resolving the
+            // framework's dynamic system color resources (broken theme engine state) - fall
+            // back instead of crashing, same as a pre-S device with no wallpaper seed color.
+            logcat(LogPriority.ERROR, e) { "Failed to build dynamic system color scheme" }
+            TachiyomiColorScheme
+        }
     } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
         val seed = WallpaperManager.getInstance(context)
             .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
