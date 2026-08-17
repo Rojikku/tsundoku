@@ -2,6 +2,7 @@ package eu.kanade.presentation.theme.colorscheme
 
 import android.app.WallpaperManager
 import android.content.Context
+import android.content.res.Resources
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.material3.ColorScheme
@@ -28,7 +29,7 @@ internal class MonetColorScheme(context: Context) : BaseColorScheme() {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !monetSystemColorSchemeUnavailable -> {
             try {
                 MonetSystemColorScheme(context)
-            } catch (e: Throwable) {
+            } catch (e: Resources.NotFoundException) {
                 // Fall back instead of crashing, same as a pre-S device with no wallpaper seed color.
                 monetSystemColorSchemeUnavailable = true
                 logcat(LogPriority.ERROR, e) { "Failed to build dynamic system color scheme" }
