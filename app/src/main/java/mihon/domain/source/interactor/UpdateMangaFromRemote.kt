@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SManga
+import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import mihon.domain.source.models.RemoteMangaUpdate
 import tachiyomi.core.common.util.lang.withIOContext
@@ -88,6 +89,11 @@ class UpdateMangaFromRemote(
             val updatedManga = mangaRepository.getMangaById(manga.id)
 
             Result.success(RemoteMangaUpdate(manga = updatedManga, newChapters = newChapters))
+        } catch (e: CancellationException) {
+            // Must propagate, not be swallowed as a per-manga failure - CancellationException is
+            // a RuntimeException and would otherwise match catch(Exception) below, breaking the
+            // enclosing coroutineScope's structured concurrency on cancellation.
+            throw e
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
             Result.failure(e)
