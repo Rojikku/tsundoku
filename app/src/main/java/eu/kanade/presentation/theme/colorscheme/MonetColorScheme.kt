@@ -15,30 +15,38 @@ import com.materialkolor.toColorScheme
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
+// Null once building the dynamic system color scheme has failed on this device (some Android 14
+// OEM builds throw Resources$NotFoundException resolving broken theme-engine resources).
+// Memoized so every light/dark/AMOLED toggle - each of which reconstructs MonetColorScheme, see
+// TachiyomiTheme.kt's remember() - doesn't repeat the doomed lookup and re-log at ERROR.
+@Volatile
+private var monetSystemColorSchemeUnavailable = false
+
 internal class MonetColorScheme(context: Context) : BaseColorScheme() {
 
-    private val monet = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        try {
-            MonetSystemColorScheme(context)
-        } catch (e: Throwable) {
-            // Some Android 14 OEM builds throw Resources$NotFoundException resolving the
-            // framework's dynamic system color resources (broken theme engine state) - fall
-            // back instead of crashing, same as a pre-S device with no wallpaper seed color.
-            logcat(LogPriority.ERROR, e) { "Failed to build dynamic system color scheme" }
-            TachiyomiColorScheme
+    private val monet = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !monetSystemColorSchemeUnavailable -> {
+            try {
+                MonetSystemColorScheme(context)
+            } catch (e: Throwable) {
+                // Fall back instead of crashing, same as a pre-S device with no wallpaper seed color.
+                monetSystemColorSchemeUnavailable = true
+                logcat(LogPriority.ERROR, e) { "Failed to build dynamic system color scheme" }
+                TachiyomiColorScheme
+            }
         }
-    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-        val seed = WallpaperManager.getInstance(context)
-            .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
-            ?.primaryColor
-            ?.toArgb()
-        if (seed != null) {
-            MonetCompatColorScheme(Color(seed))
-        } else {
-            TachiyomiColorScheme
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 -> {
+            val seed = WallpaperManager.getInstance(context)
+                .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
+                ?.primaryColor
+                ?.toArgb()
+            if (seed != null) {
+                MonetCompatColorScheme(Color(seed))
+            } else {
+                TachiyomiColorScheme
+            }
         }
-    } else {
-        TachiyomiColorScheme
+        else -> TachiyomiColorScheme
     }
 
     override val darkScheme
