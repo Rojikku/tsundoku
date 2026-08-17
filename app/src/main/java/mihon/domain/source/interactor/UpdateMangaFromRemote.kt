@@ -88,12 +88,17 @@ class UpdateMangaFromRemote(
             val updatedManga = mangaRepository.getMangaById(manga.id)
 
             Result.success(RemoteMangaUpdate(manga = updatedManga, newChapters = newChapters))
-        } catch (e: Throwable) {
-            // Outdated/incompatible extensions throw Error subtypes (NoClassDefFoundError,
-            // NoSuchMethodError, AbstractMethodError) rather than Exception - e.g. an old
-            // extension still calling a JS-engine class the app no longer bundles. Catching only
-            // Exception let one such extension crash the whole app (library update, migration,
-            // etc.) instead of failing just this manga.
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e)
+            Result.failure(e)
+        } catch (e: LinkageError) {
+            // Outdated/incompatible extensions throw LinkageError subtypes (NoClassDefFoundError,
+            // NoSuchMethodError, AbstractMethodError, IncompatibleClassChangeError) rather than
+            // Exception - e.g. an old extension still calling a JS-engine class the app no longer
+            // bundles. Catching only Exception let one such extension crash the whole app
+            // (library update, migration, etc.) instead of failing just this manga. LinkageError
+            // specifically, not Throwable/Error: JVM-fatal errors like OutOfMemoryError must still
+            // propagate instead of being swallowed mid-batch with the process limping along.
             logcat(LogPriority.ERROR, e)
             Result.failure(e)
         }
